@@ -25,13 +25,21 @@ var AppVersion = "0.1.0-dev"
 func main() {
 	ctx := base.NewMigrationContext()
 
-	// Database connection flags
-	flag.StringVar(&ctx.Host, "host", "localhost", "PostgreSQL host")
-	flag.IntVar(&ctx.Port, "port", 5432, "PostgreSQL port")
+	// Database connection flags (primary - for writes)
+	flag.StringVar(&ctx.Host, "host", "localhost", "PostgreSQL primary host")
+	flag.IntVar(&ctx.Port, "port", 5432, "PostgreSQL primary port")
 	flag.StringVar(&ctx.User, "user", "", "PostgreSQL user (required)")
 	flag.StringVar(&ctx.Password, "password", "", "PostgreSQL password")
 	flag.StringVar(&ctx.DatabaseName, "database", "", "Database name (required)")
 	flag.StringVar(&ctx.SSLMode, "sslmode", "prefer", "SSL mode (disable, allow, prefer, require, verify-ca, verify-full)")
+
+	// Replica connection flags (for reading replication stream)
+	flag.StringVar(&ctx.ReplicaHost, "replica-host", "", "PostgreSQL replica host for streaming (if different from primary)")
+	flag.IntVar(&ctx.ReplicaPort, "replica-port", 5432, "PostgreSQL replica port")
+	flag.StringVar(&ctx.ReplicaUser, "replica-user", "", "PostgreSQL replica user (defaults to --user)")
+	flag.StringVar(&ctx.ReplicaPassword, "replica-password", "", "PostgreSQL replica password (defaults to --password)")
+	flag.StringVar(&ctx.ReplicaSSLMode, "replica-sslmode", "", "Replica SSL mode (defaults to --sslmode)")
+	flag.BoolVar(&ctx.SkipReplicaClusterValidation, "skip-replica-cluster-validation", false, "Skip validation that replica is in the same cluster as primary (use with caution)")
 
 	// Table and ALTER flags
 	flag.StringVar(&ctx.SchemaName, "schema", "public", "Schema name")
@@ -117,6 +125,19 @@ func main() {
 		*chunkSize = 100000
 	}
 	ctx.ChunkSize = *chunkSize
+
+	// Default replica settings from primary if replica host is specified but other fields are not
+	if ctx.ReplicaHost != "" {
+		if ctx.ReplicaUser == "" {
+			ctx.ReplicaUser = ctx.User
+		}
+		if ctx.ReplicaPassword == "" {
+			ctx.ReplicaPassword = ctx.Password
+		}
+		if ctx.ReplicaSSLMode == "" {
+			ctx.ReplicaSSLMode = ctx.SSLMode
+		}
+	}
 
 	// Parse load maps
 	if *maxLoad != "" {

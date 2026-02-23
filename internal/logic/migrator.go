@@ -14,6 +14,7 @@ import (
 
 	"github.com/your-org/pg-ost/internal/base"
 	"github.com/your-org/pg-ost/internal/dml"
+	"github.com/your-org/pg-ost/internal/pg"
 	"github.com/your-org/pg-ost/internal/sql"
 )
 
@@ -137,6 +138,21 @@ func (m *Migrator) Migrate() error {
 	// Step 3: Validate PostgreSQL requirements (version, wal_level, replication permission)
 	if err := m.inspector.ValidateRequirements(); err != nil {
 		return fmt.Errorf("requirements validation failed: %w", err)
+	}
+
+	// Step 3b: Validate replica requirements if configured
+	if m.migrationContext.HasReplicaConnection() {
+		replicaConfig := &pg.ConnectionConfig{
+			Host:     m.migrationContext.ReplicaHost,
+			Port:     m.migrationContext.ReplicaPort,
+			User:     m.migrationContext.ReplicaUser,
+			Password: m.migrationContext.ReplicaPassword,
+			Database: m.migrationContext.DatabaseName,
+			SSLMode:  m.migrationContext.ReplicaSSLMode,
+		}
+		if err := m.inspector.ValidateReplicaRequirements(replicaConfig); err != nil {
+			return fmt.Errorf("replica validation failed: %w", err)
+		}
 	}
 
 	// Step 4: Validate table and get unique key

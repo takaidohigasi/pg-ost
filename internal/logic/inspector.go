@@ -450,7 +450,7 @@ func (i *Inspector) ValidateReplicationPermission() error {
 
 // ValidateRequirements validates all PostgreSQL requirements for pg-ost
 func (i *Inspector) ValidateRequirements() error {
-	i.migrationContext.Log.Info("Validating PostgreSQL requirements...")
+	i.migrationContext.Log.Info("Validating PostgreSQL requirements on primary...")
 
 	// Check PostgreSQL version
 	if err := i.ValidatePostgreSQLVersion(); err != nil {
@@ -467,6 +467,119 @@ func (i *Inspector) ValidateRequirements() error {
 		return err
 	}
 
-	i.migrationContext.Log.Info("All requirements validated successfully")
+	i.migrationContext.Log.Info("All primary requirements validated successfully")
+	return nil
+}
+
+// GetSystemIdentifier returns the PostgreSQL cluster system identifier
+func (i *Inspector) GetSystemIdentifier() (string, error) {
+	ctx := context.Background()
+	var systemID string
+	err := i.db.QueryRowContext(ctx, "SELECT system_identifier FROM pg_control_system()").Scan(&systemID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get system identifier: %w", err)
+	}
+	return systemID, nil
+}
+
+// ValidateReplicaRequirements validates the replica connection if configured
+func (i *Inspector) ValidateReplicaRequirements(replicaConfig *pg.ConnectionConfig) error {
+	if replicaConfig == nil {
+		return nil
+	}
+
+	i.migrationContext.Log.Info("Validating replica requirements on %s:%d...",
+		replicaConfig.Host, replicaConfig.Port)
+
+	ctx := context.Background()
+
+	// Get primary system identifier first
+	primarySystemID, err := i.GetSystemIdentifier()
+	if err != nil {
+		return fmt.Errorf("failed to get primary system identifier: %w", err)
+	}
+	i.migrationContext.Log.Debug("Primary system identifier: %s", primarySystemID)
+
+	// Connect to replica
+	replicaDB, err := replicaConfig.Connect(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to connect to replica: %w", err)
+	}
+	defer replicaDB.Close()
+
+	// Get replica system identifier
+	var replicaSystemID string
+	err = replicaDB.QueryRowContext(ctx, "SELECT system_identifier FROM pg_control_system()").Scan(&replicaSystemID)
+	if err != nil {
+		return fmt.Errorf("failed to get replica system identifier: %w", err)
+	}
+	i.migrationContext.Log.Debug("Replica system identifier: %s", replicaSystemID)
+
+	// Validate same cluster
+	if primarySystemID != replicaSystemID {
+		if i.migrationContext.SkipReplicaClusterValidation {
+			i.migrationContext.Log.Warning("Primary and replica have different system_identifier (primary: %s, replica: %s). Skipping validation as requested.",
+				primarySystemID, replicaSystemID)
+		} else {
+			return fmt.Errorf("primary and replica are not in the same cluster. Primary system_identifier: %s, Replica system_identifier: %s. Use --skip-replica-cluster-validation to bypass this check (use with caution)",
+				primarySystemID, replicaSystemID)
+		}
+	} else {
+		i.migrationContext.Log.Info("Confirmed primary and replica are in the same cluster (system_identifier: %s)", primarySystemID)
+	}
+
+	// Check if it's actually a replica (in recovery)
+	var isInRecovery bool
+	err = replicaDB.QueryRowContext(ctx, "SELECT pg_is_in_recovery()").Scan(&isInRecovery)
+	if err != nil {
+		return fmt.Errorf("failed to check replica status: %w", err)
+	}
+
+	if !isInRecovery {
+		i.migrationContext.Log.Warning("The specified replica host is not in recovery mode (might be primary)")
+	} else {
+		i.migrationContext.Log.Info("Confirmed replica is in recovery mode")
+	}
+
+	// Check PostgreSQL version on replica
+	replicaVersion, err := pg.GetVersion(ctx, replicaDB)
+	if err != nil {
+		return fmt.Errorf("failed to get replica version: %w", err)
+	}
+
+	if !replicaVersion.SupportsStreamingLargeTransactions() {
+		return fmt.Errorf("replica PostgreSQL %s is not supported. pg-ost requires PostgreSQL 14+", replicaVersion)
+	}
+
+	i.migrationContext.Log.Info("Replica PostgreSQL version: %s", replicaVersion)
+
+	// Check hot_standby_feedback (recommended for avoiding replication conflicts)
+	var hotStandbyFeedback string
+	err = replicaDB.QueryRowContext(ctx, "SHOW hot_standby_feedback").Scan(&hotStandbyFeedback)
+	if err != nil {
+		i.migrationContext.Log.Warning("Could not check hot_standby_feedback: %v", err)
+	} else if hotStandbyFeedback != "on" {
+		i.migrationContext.Log.Warning("hot_standby_feedback is '%s'. Consider setting it to 'on' to avoid replication conflicts", hotStandbyFeedback)
+	} else {
+		i.migrationContext.Log.Info("hot_standby_feedback = on")
+	}
+
+	// Check replication permission on replica
+	var hasReplication bool
+	err = replicaDB.QueryRowContext(ctx, `
+		SELECT rolreplication OR rolsuper
+		FROM pg_roles
+		WHERE rolname = current_user
+	`).Scan(&hasReplication)
+
+	if err != nil {
+		return fmt.Errorf("failed to check replication permission on replica: %w", err)
+	}
+
+	if !hasReplication {
+		return fmt.Errorf("user '%s' does not have replication permission on replica", replicaConfig.User)
+	}
+
+	i.migrationContext.Log.Info("Replica requirements validated successfully")
 	return nil
 }

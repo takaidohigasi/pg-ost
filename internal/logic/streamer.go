@@ -19,17 +19,24 @@ import (
 
 // Streamer wraps the replication components for streaming DML events
 type Streamer struct {
-	connectionConfig *pg.ConnectionConfig
+	// Primary connection config (for slot/publication management)
+	primaryConfig *pg.ConnectionConfig
+	// Replica connection config (for streaming - may be same as primary)
+	replicaConfig    *pg.ConnectionConfig
 	migrationContext *base.MigrationContext
 
 	reader      *replication.Reader
 	slotManager *replication.SlotManager
 	pubManager  *replication.PublicationManager
+
+	// Track if we're using a separate replica
+	usingReplica bool
 }
 
 // NewStreamer creates a new Streamer
 func NewStreamer(ctx *base.MigrationContext) *Streamer {
-	connConfig := &pg.ConnectionConfig{
+	// Primary connection config (for writes, slot/publication management)
+	primaryConfig := &pg.ConnectionConfig{
 		Host:     ctx.Host,
 		Port:     ctx.Port,
 		User:     ctx.User,
@@ -38,9 +45,29 @@ func NewStreamer(ctx *base.MigrationContext) *Streamer {
 		SSLMode:  ctx.SSLMode,
 	}
 
+	// Replica connection config (for streaming)
+	// If replica is configured, use it; otherwise use primary
+	var replicaConfig *pg.ConnectionConfig
+	usingReplica := ctx.HasReplicaConnection()
+
+	if usingReplica {
+		replicaConfig = &pg.ConnectionConfig{
+			Host:     ctx.ReplicaHost,
+			Port:     ctx.ReplicaPort,
+			User:     ctx.ReplicaUser,
+			Password: ctx.ReplicaPassword,
+			Database: ctx.DatabaseName,
+			SSLMode:  ctx.ReplicaSSLMode,
+		}
+	} else {
+		replicaConfig = primaryConfig
+	}
+
 	return &Streamer{
-		connectionConfig: connConfig,
+		primaryConfig:    primaryConfig,
+		replicaConfig:    replicaConfig,
 		migrationContext: ctx,
+		usingReplica:     usingReplica,
 	}
 }
 
@@ -48,10 +75,11 @@ func NewStreamer(ctx *base.MigrationContext) *Streamer {
 func (s *Streamer) InitDBConnections() error {
 	ctx := context.Background()
 
-	// Create a regular database connection for slot and publication management
-	db, err := s.connectionConfig.Connect(ctx)
+	// Create a regular database connection to PRIMARY for slot and publication management
+	// Note: Publications and replication slots must be created on the primary
+	db, err := s.primaryConfig.Connect(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
+		return fmt.Errorf("failed to connect to primary: %w", err)
 	}
 
 	// Generate names for publication and slot
@@ -66,10 +94,10 @@ func (s *Streamer) InitDBConnections() error {
 			s.migrationContext.OriginalTableName)
 	}
 
-	// Initialize slot manager
+	// Initialize slot manager (on primary)
 	s.slotManager = replication.NewSlotManager(db, s.migrationContext.ReplicationSlotName)
 
-	// Initialize publication manager (for original table and changelog)
+	// Initialize publication manager (on primary, for original table and changelog)
 	s.pubManager = replication.NewPublicationManager(
 		db,
 		s.migrationContext.PublicationName,
@@ -88,11 +116,11 @@ func (s *Streamer) InitDBConnections() error {
 		}
 	}
 
-	// Create publication for original table
+	// Create publication for original table (on primary)
 	if err := s.pubManager.Create(ctx); err != nil {
 		return fmt.Errorf("failed to create publication: %w", err)
 	}
-	s.migrationContext.Log.Info("Created publication %s", s.migrationContext.PublicationName)
+	s.migrationContext.Log.Info("Created publication %s on primary", s.migrationContext.PublicationName)
 
 	// Add changelog table to publication
 	if err := s.pubManager.AddTable(ctx, s.migrationContext.SchemaName, s.migrationContext.GetChangelogTableName()); err != nil {
@@ -100,7 +128,7 @@ func (s *Streamer) InitDBConnections() error {
 		s.migrationContext.Log.Debug("Could not add changelog to publication (may not exist yet): %v", err)
 	}
 
-	// Drop existing slot if exists
+	// Drop existing slot if exists (on primary)
 	slotExists, err := s.slotManager.Exists(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to check slot: %w", err)
@@ -119,17 +147,23 @@ func (s *Streamer) InitDBConnections() error {
 		}
 	}
 
-	// Create replication slot
+	// Create replication slot (on primary)
 	lsn, err := s.slotManager.Create(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create replication slot: %w", err)
 	}
 	s.migrationContext.StartLSN = lsn
-	s.migrationContext.Log.Info("Created replication slot %s at LSN %s",
+	s.migrationContext.Log.Info("Created replication slot %s at LSN %s on primary",
 		s.migrationContext.ReplicationSlotName, lsn)
 
-	// Initialize reader
-	s.reader = replication.NewReader(s.migrationContext, s.connectionConfig)
+	// Initialize reader with REPLICA connection config (for streaming)
+	// This allows reading from a replica while slot is on primary
+	s.reader = replication.NewReader(s.migrationContext, s.replicaConfig)
+
+	if s.usingReplica {
+		s.migrationContext.Log.Info("Will stream replication events from replica %s:%d",
+			s.replicaConfig.Host, s.replicaConfig.Port)
+	}
 
 	return nil
 }

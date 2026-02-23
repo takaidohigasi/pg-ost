@@ -248,3 +248,25 @@ func TestConcurrentAccess(t *testing.T) {
 		t.Errorf("GetIteration() = %d, want %d", ctx.GetIteration(), expected)
 	}
 }
+
+func TestReplicaConnection(t *testing.T) {
+	ctx := NewMigrationContext()
+
+	// Initially no replica configured
+	if ctx.HasReplicaConnection() {
+		t.Error("Should not have replica connection initially")
+	}
+
+	// Set replica host
+	ctx.ReplicaHost = "replica.example.com"
+	ctx.ReplicaPort = 5433
+
+	if !ctx.HasReplicaConnection() {
+		t.Error("Should have replica connection after setting ReplicaHost")
+	}
+
+	hostPort := ctx.GetReplicaHostPort()
+	if hostPort != "replica.example.com" {
+		t.Errorf("GetReplicaHostPort() = %q, want 'replica.example.com'", hostPort)
+	}
+}

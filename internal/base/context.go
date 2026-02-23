@@ -66,12 +66,21 @@ type MigrationContext struct {
 	OriginalTableName string
 	AlterStatement    string
 
-	// Connection settings
+	// Connection settings (primary - for writes)
 	Host     string
 	Port     int
 	User     string
 	Password string
 	SSLMode  string
+
+	// Replica connection settings (for reading replication stream)
+	// If not set, primary connection is used for streaming
+	ReplicaHost                   string
+	ReplicaPort                   int
+	ReplicaUser                   string
+	ReplicaPassword               string
+	ReplicaSSLMode                string
+	SkipReplicaClusterValidation  bool // Skip validation that replica is in the same cluster as primary
 
 	// Replication settings
 	PublicationName     string
@@ -451,6 +460,23 @@ func (ctx *MigrationContext) GetETA() time.Duration {
 	}
 
 	return time.Duration(remainingRows/etaRowsPerSecond) * time.Second
+}
+
+// HasReplicaConnection returns true if a separate replica connection is configured
+func (ctx *MigrationContext) HasReplicaConnection() bool {
+	return ctx.ReplicaHost != ""
+}
+
+// GetReplicaHostPort returns the replica host:port string
+func (ctx *MigrationContext) GetReplicaHostPort() string {
+	if !ctx.HasReplicaConnection() {
+		return ""
+	}
+	port := ctx.ReplicaPort
+	if port == 0 {
+		port = 5432
+	}
+	return ctx.ReplicaHost
 }
 
 // defaultLogger is a simple default logger
