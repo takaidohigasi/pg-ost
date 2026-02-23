@@ -1,0 +1,81 @@
+# Full pg-ost configuration with all available options
+# This file documents all configuration options with their default values
+
+# Primary database connection settings
+database:
+  host: localhost           # PostgreSQL primary host
+  port: 5432               # PostgreSQL primary port
+  user: myuser             # Database user (required)
+  password: mypassword     # Database password
+  database: mydb           # Database name (required)
+  sslmode: prefer          # SSL mode: disable, allow, prefer, require, verify-ca, verify-full
+
+# Optional: Replica connection for streaming replication events
+# This reduces load on the primary during migration
+# replica:
+#   host: replica.example.com  # Replica host (required if replica section is specified)
+#   port: 5432                 # Replica port (default: 5432)
+#   user: ""                   # Replica user (default: same as database.user)
+#   password: ""               # Replica password (default: same as database.password)
+#   sslmode: ""                # Replica SSL mode (default: same as database.sslmode)
+#   skip_cluster_validation: false  # Skip validation that replica is same cluster as primary
+
+# Table and ALTER statement configuration
+table:
+  schema: public           # Schema name (default: public)
+  name: users              # Table name (required)
+  alter: "ADD COLUMN email_verified BOOLEAN DEFAULT false"  # ALTER statement (required)
+
+# Processing settings
+processing:
+  chunk_size: 1000         # Number of rows per chunk (100-100000)
+  dml_batch_size: 100      # Number of DML events to batch together
+  nice_ratio: 0            # Sleep ratio between chunks (0=aggressive, higher=slower)
+  heartbeat_interval_ms: 500  # Heartbeat interval in milliseconds
+  exact_row_count: false   # Use exact row count (slower) instead of estimate
+  concurrent_row_count: false  # Count rows concurrently with migration
+
+# Throttling settings
+throttle:
+  max_lag_ms: 1500         # Maximum replication lag before throttling (milliseconds)
+  flag_file: ""            # File that, when exists, will pause migration
+  additional_flag_file: "" # Additional throttle flag file
+  query: ""                # Query that, if returns > 0, will pause migration
+  http: ""                 # HTTP endpoint to check for throttling (non-200 = throttle)
+  http_interval_ms: 100    # Interval between HTTP throttle checks
+  ignore_http_errors: false  # Ignore HTTP errors (don't throttle on connection failures)
+
+  # Load thresholds based on pg_stat_activity
+  # max_load:
+  #   active_connections: 100
+  #   idle_in_transaction: 10
+
+  # Critical load causes hibernation (longer pause)
+  # critical_load:
+  #   active_connections: 200
+  critical_load_interval_ms: 1000   # Interval between critical load checks
+  critical_load_hibernate_seconds: 60  # Hibernate duration when critical load is reached
+
+# Cutover settings
+cutover:
+  lock_timeout_seconds: 10   # Lock timeout for cutover
+  postpone_flag_file: ""     # File that, when exists, will postpone cutover
+  panic_flag_file: ""        # File that, when exists, will abort migration
+  ok_to_drop_table: false    # Allow dropping the old table after cutover
+  initially_drop_old_table: false    # Drop any existing _old table before migration
+  initially_drop_ghost_table: false  # Drop any existing ghost table before migration
+  timestamp_old_table: false  # Add timestamp to old table name
+
+# Optional: Online control server
+# server:
+#   socket_file: /tmp/pg-ost.sock  # Unix socket file for online control
+#   tcp_port: 0                     # TCP port for online control (0 = disabled)
+#   drop_socket: false              # Drop existing socket file if it exists
+
+# Optional: Hook scripts
+# hooks:
+#   path: /path/to/hooks           # Directory containing hook scripts
+#   hint_message: ""               # Message to pass to hooks
+#   hint_owner: ""                 # Owner to pass to hooks
+#   hint_token: ""                 # Token to pass to hooks
+#   status_interval_seconds: 60   # Interval between status hook calls

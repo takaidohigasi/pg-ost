@@ -1,0 +1,11 @@
+# Minimal pg-ost configuration
+# Only required fields are specified; defaults are used for everything else
+
+database:
+  user: myuser
+  password: mypassword
+  database: mydb
+
+table:
+  name: users
+  alter: "ADD COLUMN email_verified BOOLEAN DEFAULT false"

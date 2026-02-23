@@ -1,0 +1,35 @@
+# Configuration example for streaming from replica
+# This setup reads WAL from a replica while writes go to the primary,
+# reducing load on the primary server during migration.
+
+database:
+  host: primary.example.com
+  port: 5432
+  user: migration_user
+  password: "${PG_PASSWORD}"
+  database: production_db
+  sslmode: require
+
+# Replica configuration for streaming WAL events
+replica:
+  host: replica.example.com
+  port: 5432
+  # user, password, sslmode inherited from database section
+  skip_cluster_validation: false  # Ensure primary and replica are same cluster
+
+table:
+  schema: public
+  name: large_table
+  alter: "ADD COLUMN new_column TEXT"
+
+processing:
+  chunk_size: 2000           # Larger chunks since replica handles reads
+  dml_batch_size: 200
+  nice_ratio: 0.3
+
+throttle:
+  max_lag_ms: 2000           # Slightly higher tolerance when using replica
+
+cutover:
+  lock_timeout_seconds: 15
+  ok_to_drop_table: false

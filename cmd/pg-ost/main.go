@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/your-org/pg-ost/internal/base"
+	"github.com/your-org/pg-ost/internal/config"
 	"github.com/your-org/pg-ost/internal/logic"
 )
 
@@ -25,36 +26,39 @@ var AppVersion = "0.1.0-dev"
 func main() {
 	ctx := base.NewMigrationContext()
 
+	// Config file flag (takes precedence, CLI flags override)
+	configFile := flag.String("config", "", "Path to YAML configuration file")
+
 	// Database connection flags (primary - for writes)
-	flag.StringVar(&ctx.Host, "host", "localhost", "PostgreSQL primary host")
-	flag.IntVar(&ctx.Port, "port", 5432, "PostgreSQL primary port")
-	flag.StringVar(&ctx.User, "user", "", "PostgreSQL user (required)")
+	flag.StringVar(&ctx.Host, "host", "", "PostgreSQL primary host")
+	flag.IntVar(&ctx.Port, "port", 0, "PostgreSQL primary port")
+	flag.StringVar(&ctx.User, "user", "", "PostgreSQL user")
 	flag.StringVar(&ctx.Password, "password", "", "PostgreSQL password")
-	flag.StringVar(&ctx.DatabaseName, "database", "", "Database name (required)")
-	flag.StringVar(&ctx.SSLMode, "sslmode", "prefer", "SSL mode (disable, allow, prefer, require, verify-ca, verify-full)")
+	flag.StringVar(&ctx.DatabaseName, "database", "", "Database name")
+	flag.StringVar(&ctx.SSLMode, "sslmode", "", "SSL mode (disable, allow, prefer, require, verify-ca, verify-full)")
 
 	// Replica connection flags (for reading replication stream)
 	flag.StringVar(&ctx.ReplicaHost, "replica-host", "", "PostgreSQL replica host for streaming (if different from primary)")
-	flag.IntVar(&ctx.ReplicaPort, "replica-port", 5432, "PostgreSQL replica port")
+	flag.IntVar(&ctx.ReplicaPort, "replica-port", 0, "PostgreSQL replica port")
 	flag.StringVar(&ctx.ReplicaUser, "replica-user", "", "PostgreSQL replica user (defaults to --user)")
 	flag.StringVar(&ctx.ReplicaPassword, "replica-password", "", "PostgreSQL replica password (defaults to --password)")
 	flag.StringVar(&ctx.ReplicaSSLMode, "replica-sslmode", "", "Replica SSL mode (defaults to --sslmode)")
 	flag.BoolVar(&ctx.SkipReplicaClusterValidation, "skip-replica-cluster-validation", false, "Skip validation that replica is in the same cluster as primary (use with caution)")
 
 	// Table and ALTER flags
-	flag.StringVar(&ctx.SchemaName, "schema", "public", "Schema name")
-	flag.StringVar(&ctx.OriginalTableName, "table", "", "Table name (required)")
-	flag.StringVar(&ctx.AlterStatement, "alter", "", "ALTER statement (required)")
+	flag.StringVar(&ctx.SchemaName, "schema", "", "Schema name")
+	flag.StringVar(&ctx.OriginalTableName, "table", "", "Table name")
+	flag.StringVar(&ctx.AlterStatement, "alter", "", "ALTER statement")
 
 	// Execution flags
 	flag.BoolVar(&ctx.Execute, "execute", false, "Actually execute the migration (dry-run otherwise)")
 	flag.BoolVar(&ctx.Noop, "noop", false, "Do not apply any changes, for testing")
 
 	// Chunk and throttle settings
-	chunkSize := flag.Int64("chunk-size", 1000, "Number of rows per chunk (100-100000)")
-	flag.Int64Var(&ctx.MaxLagMillisecondsThrottleThreshold, "max-lag-millis", 1500, "Maximum replication lag before throttling")
+	chunkSize := flag.Int64("chunk-size", 0, "Number of rows per chunk (100-100000)")
+	maxLagMillis := flag.Int64("max-lag-millis", 0, "Maximum replication lag before throttling")
 	flag.Float64Var(&ctx.NiceRatio, "nice-ratio", 0, "Ratio of sleep time between chunks (0=aggressive, 1=slower)")
-	flag.Int64Var(&ctx.DMLBatchSize, "dml-batch-size", 100, "Number of DML events to batch together")
+	dmlBatchSize := flag.Int64("dml-batch-size", 0, "Number of DML events to batch together")
 
 	// Throttle control flags
 	flag.StringVar(&ctx.ThrottleFlagFile, "throttle-flag-file", "", "File that, when exists, will pause migration")
@@ -77,7 +81,7 @@ func main() {
 	flag.BoolVar(&ctx.ConcurrentCountTableRows, "concurrent-rowcount", false, "Count rows concurrently with migration")
 
 	// Cutover settings
-	flag.Int64Var(&ctx.CutOverLockTimeoutSeconds, "cut-over-lock-timeout-seconds", 10, "Lock timeout for cutover")
+	cutOverLockTimeout := flag.Int64("cut-over-lock-timeout-seconds", 0, "Lock timeout for cutover")
 
 	// Server settings
 	flag.StringVar(&ctx.ServeSocketFile, "serve-socket-file", "", "Unix socket file for online control")
@@ -91,7 +95,7 @@ func main() {
 	flag.StringVar(&ctx.HooksHintToken, "hooks-hint-token", "", "Token to pass to hooks")
 
 	// Heartbeat
-	flag.Int64Var(&ctx.HeartbeatIntervalMilliseconds, "heartbeat-interval-millis", 500, "Heartbeat interval in milliseconds")
+	heartbeatInterval := flag.Int64("heartbeat-interval-millis", 0, "Heartbeat interval in milliseconds")
 
 	// Verbose/version
 	version := flag.Bool("version", false, "Print version and exit")
@@ -104,27 +108,42 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Validate required flags
-	if ctx.DatabaseName == "" {
-		log.Fatal("--database is required")
-	}
-	if ctx.OriginalTableName == "" {
-		log.Fatal("--table is required")
-	}
-	if ctx.AlterStatement == "" {
-		log.Fatal("--alter is required")
-	}
-	if ctx.User == "" {
-		log.Fatal("--user is required")
+	// Load config file if specified
+	if *configFile != "" {
+		cfg, err := config.LoadFromFile(*configFile)
+		if err != nil {
+			log.Fatalf("Failed to load config file: %v", err)
+		}
+		applyConfigToContext(cfg, ctx)
+		log.Printf("[INFO] Loaded configuration from %s", *configFile)
 	}
 
-	// Apply chunk size with validation
-	if *chunkSize < 100 {
-		*chunkSize = 100
-	} else if *chunkSize > 100000 {
-		*chunkSize = 100000
+	// CLI flags override config file values (only if explicitly set)
+	applyCliOverrides(ctx, chunkSize, maxLagMillis, dmlBatchSize, cutOverLockTimeout, heartbeatInterval, maxLoad, criticalLoad)
+
+	// Apply defaults for values not set by config or CLI
+	applyDefaults(ctx)
+
+	// Validate required fields
+	if ctx.DatabaseName == "" {
+		log.Fatal("--database is required (or set in config file)")
 	}
-	ctx.ChunkSize = *chunkSize
+	if ctx.OriginalTableName == "" {
+		log.Fatal("--table is required (or set in config file)")
+	}
+	if ctx.AlterStatement == "" {
+		log.Fatal("--alter is required (or set in config file)")
+	}
+	if ctx.User == "" {
+		log.Fatal("--user is required (or set in config file)")
+	}
+
+	// Validate chunk size
+	if ctx.ChunkSize < 100 {
+		ctx.ChunkSize = 100
+	} else if ctx.ChunkSize > 100000 {
+		ctx.ChunkSize = 100000
+	}
 
 	// Default replica settings from primary if replica host is specified but other fields are not
 	if ctx.ReplicaHost != "" {
@@ -139,7 +158,7 @@ func main() {
 		}
 	}
 
-	// Parse load maps
+	// Parse load maps from CLI (overrides config)
 	if *maxLoad != "" {
 		var err error
 		ctx.MaxLoad, err = base.ParseLoadMap(*maxLoad)
@@ -221,4 +240,136 @@ func (l *verboseLogger) Error(format string, args ...interface{}) {
 }
 func (l *verboseLogger) Fatal(format string, args ...interface{}) {
 	log.Fatalf("[FATAL] "+format, args...)
+}
+
+// applyConfigToContext applies configuration from YAML file to MigrationContext
+func applyConfigToContext(cfg *config.Config, ctx *base.MigrationContext) {
+	// Database settings
+	ctx.Host = cfg.Database.Host
+	ctx.Port = cfg.Database.Port
+	ctx.User = cfg.Database.User
+	ctx.Password = cfg.Database.Password
+	ctx.DatabaseName = cfg.Database.Database
+	ctx.SSLMode = cfg.Database.SSLMode
+
+	// Replica settings
+	if cfg.Replica != nil {
+		ctx.ReplicaHost = cfg.Replica.Host
+		ctx.ReplicaPort = cfg.Replica.Port
+		ctx.ReplicaUser = cfg.Replica.User
+		ctx.ReplicaPassword = cfg.Replica.Password
+		ctx.ReplicaSSLMode = cfg.Replica.SSLMode
+		ctx.SkipReplicaClusterValidation = cfg.Replica.SkipClusterValidation
+	}
+
+	// Table settings
+	ctx.SchemaName = cfg.Table.Schema
+	ctx.OriginalTableName = cfg.Table.Name
+	ctx.AlterStatement = cfg.Table.Alter
+
+	// Processing settings
+	ctx.ChunkSize = cfg.Processing.ChunkSize
+	ctx.DMLBatchSize = cfg.Processing.DMLBatchSize
+	ctx.NiceRatio = cfg.Processing.NiceRatio
+	ctx.HeartbeatIntervalMilliseconds = cfg.Processing.HeartbeatIntervalMs
+	ctx.CountTableRows = cfg.Processing.ExactRowCount
+	ctx.ConcurrentCountTableRows = cfg.Processing.ConcurrentRowCount
+
+	// Throttle settings
+	ctx.MaxLagMillisecondsThrottleThreshold = cfg.Throttle.MaxLagMs
+	ctx.ThrottleFlagFile = cfg.Throttle.FlagFile
+	ctx.ThrottleAdditionalFlagFile = cfg.Throttle.AdditionalFlagFile
+	ctx.ThrottleQuery = cfg.Throttle.Query
+	ctx.ThrottleHTTP = cfg.Throttle.HTTP
+	ctx.ThrottleHTTPIntervalMillis = cfg.Throttle.HTTPIntervalMs
+	ctx.IgnoreHTTPErrors = cfg.Throttle.IgnoreHTTPErrors
+	ctx.CriticalLoadIntervalMilliseconds = cfg.Throttle.CriticalLoadIntervalMs
+	ctx.CriticalLoadHibernateSeconds = cfg.Throttle.CriticalLoadHibernateS
+
+	// Convert max_load and critical_load maps
+	if len(cfg.Throttle.MaxLoad) > 0 {
+		ctx.MaxLoad = base.LoadMap(cfg.Throttle.MaxLoad)
+	}
+	if len(cfg.Throttle.CriticalLoad) > 0 {
+		ctx.CriticalLoad = base.LoadMap(cfg.Throttle.CriticalLoad)
+	}
+
+	// Cutover settings
+	ctx.CutOverLockTimeoutSeconds = cfg.Cutover.LockTimeoutSeconds
+	ctx.PostponeCutOverFlagFile = cfg.Cutover.PostponeFlagFile
+	ctx.PanicFlagFile = cfg.Cutover.PanicFlagFile
+	ctx.OkToDropTable = cfg.Cutover.OkToDropTable
+	ctx.InitiallyDropOldTable = cfg.Cutover.InitiallyDropOld
+	ctx.InitiallyDropGhostTable = cfg.Cutover.InitiallyDropGhost
+	ctx.TimestampOldTable = cfg.Cutover.TimestampOldTable
+
+	// Server settings
+	if cfg.Server != nil {
+		ctx.ServeSocketFile = cfg.Server.SocketFile
+		ctx.ServeTCPPort = cfg.Server.TCPPort
+		ctx.DropServeSocket = cfg.Server.DropSocket
+	}
+
+	// Hooks settings
+	if cfg.Hooks != nil {
+		ctx.HooksPath = cfg.Hooks.Path
+		ctx.HooksHintMessage = cfg.Hooks.HintMessage
+		ctx.HooksHintOwner = cfg.Hooks.HintOwner
+		ctx.HooksHintToken = cfg.Hooks.HintToken
+		ctx.HooksStatusIntervalSec = cfg.Hooks.StatusIntervalSec
+	}
+}
+
+// applyCliOverrides applies CLI flag overrides (only non-zero/non-empty values)
+func applyCliOverrides(ctx *base.MigrationContext, chunkSize, maxLagMillis, dmlBatchSize, cutOverLockTimeout, heartbeatInterval *int64, maxLoad, criticalLoad *string) {
+	// Only override if CLI flag was explicitly set (non-zero/non-empty)
+	if *chunkSize > 0 {
+		ctx.ChunkSize = *chunkSize
+	}
+	if *maxLagMillis > 0 {
+		ctx.MaxLagMillisecondsThrottleThreshold = *maxLagMillis
+	}
+	if *dmlBatchSize > 0 {
+		ctx.DMLBatchSize = *dmlBatchSize
+	}
+	if *cutOverLockTimeout > 0 {
+		ctx.CutOverLockTimeoutSeconds = *cutOverLockTimeout
+	}
+	if *heartbeatInterval > 0 {
+		ctx.HeartbeatIntervalMilliseconds = *heartbeatInterval
+	}
+}
+
+// applyDefaults sets default values for fields not set by config or CLI
+func applyDefaults(ctx *base.MigrationContext) {
+	if ctx.Host == "" {
+		ctx.Host = "localhost"
+	}
+	if ctx.Port == 0 {
+		ctx.Port = 5432
+	}
+	if ctx.SSLMode == "" {
+		ctx.SSLMode = "prefer"
+	}
+	if ctx.SchemaName == "" {
+		ctx.SchemaName = "public"
+	}
+	if ctx.ChunkSize == 0 {
+		ctx.ChunkSize = 1000
+	}
+	if ctx.DMLBatchSize == 0 {
+		ctx.DMLBatchSize = 100
+	}
+	if ctx.MaxLagMillisecondsThrottleThreshold == 0 {
+		ctx.MaxLagMillisecondsThrottleThreshold = 1500
+	}
+	if ctx.HeartbeatIntervalMilliseconds == 0 {
+		ctx.HeartbeatIntervalMilliseconds = 500
+	}
+	if ctx.CutOverLockTimeoutSeconds == 0 {
+		ctx.CutOverLockTimeoutSeconds = 10
+	}
+	if ctx.ReplicaPort == 0 {
+		ctx.ReplicaPort = 5432
+	}
 }

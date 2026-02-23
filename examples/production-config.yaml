@@ -1,0 +1,50 @@
+# Production-ready pg-ost configuration
+# Uses environment variables for sensitive data and includes recommended settings
+
+database:
+  host: "${PG_HOST}"
+  port: 5432
+  user: "${PG_USER}"
+  password: "${PG_PASSWORD}"
+  database: "${PG_DATABASE}"
+  sslmode: require
+
+# Stream from replica to reduce primary load
+replica:
+  host: "${PG_REPLICA_HOST}"
+  # User/password inherited from database section
+
+table:
+  schema: public
+  name: "${TABLE_NAME}"
+  alter: "${ALTER_STATEMENT}"
+
+processing:
+  chunk_size: 1000
+  dml_batch_size: 100
+  nice_ratio: 0.5            # Be gentle, sleep 0.5 second ratio between chunks
+  heartbeat_interval_ms: 500
+
+throttle:
+  max_lag_ms: 1500
+  flag_file: /tmp/pg-ost.throttle
+
+  # Throttle if active connections exceed threshold
+  max_load:
+    active_connections: 100
+
+  # Hibernate if critical threshold is reached
+  critical_load:
+    active_connections: 200
+  critical_load_hibernate_seconds: 60
+
+cutover:
+  lock_timeout_seconds: 10
+  postpone_flag_file: /tmp/pg-ost.postpone
+  panic_flag_file: /tmp/pg-ost.panic
+  ok_to_drop_table: false     # Keep old table for safety
+  timestamp_old_table: true   # Add timestamp to avoid conflicts
+
+server:
+  socket_file: /tmp/pg-ost.sock
+  drop_socket: true
