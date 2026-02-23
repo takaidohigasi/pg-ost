@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pglogrepl"
 
-	"github.com/your-org/pg-ost/internal/dml"
-	"github.com/your-org/pg-ost/internal/sql"
+	"github.com/takaidohigasi/pg-ost/internal/dml"
+	"github.com/takaidohigasi/pg-ost/internal/sql"
 )
 
 // PgOutputDecoder decodes pgoutput format messages

@@ -25,8 +25,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/your-org/pg-ost/internal/base"
-	"github.com/your-org/pg-ost/internal/logic"
+	"github.com/takaidohigasi/pg-ost/internal/base"
+	"github.com/takaidohigasi/pg-ost/internal/logic"
 )
 
 const (

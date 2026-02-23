@@ -13,23 +13,23 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/your-org/pg-ost/internal/base"
+	"github.com/takaidohigasi/pg-ost/internal/base"
 )
 
 // HookType represents the type of hook
 type HookType string
 
 const (
-	HookOnStartup            HookType = "on-startup"
-	HookOnValidated          HookType = "on-validated"
-	HookOnRowCountComplete   HookType = "on-row-count-complete"
-	HookOnBeforeRowCopy      HookType = "on-before-row-copy"
-	HookOnRowCopyComplete    HookType = "on-row-copy-complete"
-	HookOnBeforeCutOver      HookType = "on-before-cut-over"
-	HookOnInteractive        HookType = "on-interactive"
-	HookOnSuccess            HookType = "on-success"
-	HookOnFailure            HookType = "on-failure"
-	HookOnStatus             HookType = "on-status"
+	HookOnStartup          HookType = "on-startup"
+	HookOnValidated        HookType = "on-validated"
+	HookOnRowCountComplete HookType = "on-row-count-complete"
+	HookOnBeforeRowCopy    HookType = "on-before-row-copy"
+	HookOnRowCopyComplete  HookType = "on-row-copy-complete"
+	HookOnBeforeCutOver    HookType = "on-before-cut-over"
+	HookOnInteractive      HookType = "on-interactive"
+	HookOnSuccess          HookType = "on-success"
+	HookOnFailure          HookType = "on-failure"
+	HookOnStatus           HookType = "on-status"
 )
 
 // HooksExecutor executes external hook scripts

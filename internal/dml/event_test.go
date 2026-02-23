@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pglogrepl"
 
-	"github.com/your-org/pg-ost/internal/sql"
+	"github.com/takaidohigasi/pg-ost/internal/sql"
 )
 
 func TestEventDMLString(t *testing.T) {

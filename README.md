@@ -26,13 +26,13 @@ Inspired by [gh-ost](https://github.com/github/gh-ost), pg-ost performs schema m
 ## Installation
 
 ```bash
-go install github.com/your-org/pg-ost/cmd/pg-ost@latest
+go install github.com/takaidohigasi/pg-ost/cmd/pg-ost@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/your-org/pg-ost.git
+git clone https://github.com/takaidohigasi/pg-ost.git
 cd pg-ost
 make build
 ```

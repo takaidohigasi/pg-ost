@@ -16,14 +16,14 @@ import (
 
 // Config represents the pg-ost configuration file structure
 type Config struct {
-	Database    DatabaseConfig    `yaml:"database"`
-	Replica     *ReplicaConfig    `yaml:"replica,omitempty"`
-	Table       TableConfig       `yaml:"table"`
-	Processing  ProcessingConfig  `yaml:"processing"`
-	Throttle    ThrottleConfig    `yaml:"throttle"`
-	Cutover     CutoverConfig     `yaml:"cutover"`
-	Server      *ServerConfig     `yaml:"server,omitempty"`
-	Hooks       *HooksConfig      `yaml:"hooks,omitempty"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Replica    *ReplicaConfig   `yaml:"replica,omitempty"`
+	Table      TableConfig      `yaml:"table"`
+	Processing ProcessingConfig `yaml:"processing"`
+	Throttle   ThrottleConfig   `yaml:"throttle"`
+	Cutover    CutoverConfig    `yaml:"cutover"`
+	Server     *ServerConfig    `yaml:"server,omitempty"`
+	Hooks      *HooksConfig     `yaml:"hooks,omitempty"`
 }
 
 // DatabaseConfig holds primary database connection settings
@@ -38,12 +38,12 @@ type DatabaseConfig struct {
 
 // ReplicaConfig holds replica database connection settings for streaming
 type ReplicaConfig struct {
-	Host                    string `yaml:"host"`
-	Port                    int    `yaml:"port"`
-	User                    string `yaml:"user"`
-	Password                string `yaml:"password"`
-	SSLMode                 string `yaml:"sslmode"`
-	SkipClusterValidation   bool   `yaml:"skip_cluster_validation"`
+	Host                  string `yaml:"host"`
+	Port                  int    `yaml:"port"`
+	User                  string `yaml:"user"`
+	Password              string `yaml:"password"`
+	SSLMode               string `yaml:"sslmode"`
+	SkipClusterValidation bool   `yaml:"skip_cluster_validation"`
 }
 
 // TableConfig holds table and ALTER statement settings
@@ -55,54 +55,54 @@ type TableConfig struct {
 
 // ProcessingConfig holds row processing settings
 type ProcessingConfig struct {
-	ChunkSize            int64   `yaml:"chunk_size"`
-	DMLBatchSize         int64   `yaml:"dml_batch_size"`
-	NiceRatio            float64 `yaml:"nice_ratio"`
-	HeartbeatIntervalMs  int64   `yaml:"heartbeat_interval_ms"`
-	ExactRowCount        bool    `yaml:"exact_row_count"`
-	ConcurrentRowCount   bool    `yaml:"concurrent_row_count"`
+	ChunkSize           int64   `yaml:"chunk_size"`
+	DMLBatchSize        int64   `yaml:"dml_batch_size"`
+	NiceRatio           float64 `yaml:"nice_ratio"`
+	HeartbeatIntervalMs int64   `yaml:"heartbeat_interval_ms"`
+	ExactRowCount       bool    `yaml:"exact_row_count"`
+	ConcurrentRowCount  bool    `yaml:"concurrent_row_count"`
 }
 
 // ThrottleConfig holds throttling settings
 type ThrottleConfig struct {
-	MaxLagMs                int64             `yaml:"max_lag_ms"`
-	FlagFile                string            `yaml:"flag_file"`
-	AdditionalFlagFile      string            `yaml:"additional_flag_file"`
-	Query                   string            `yaml:"query"`
-	HTTP                    string            `yaml:"http"`
-	HTTPIntervalMs          int64             `yaml:"http_interval_ms"`
-	IgnoreHTTPErrors        bool              `yaml:"ignore_http_errors"`
-	MaxLoad                 map[string]int64  `yaml:"max_load"`
-	CriticalLoad            map[string]int64  `yaml:"critical_load"`
-	CriticalLoadIntervalMs  int64             `yaml:"critical_load_interval_ms"`
-	CriticalLoadHibernateS  int64             `yaml:"critical_load_hibernate_seconds"`
+	MaxLagMs               int64            `yaml:"max_lag_ms"`
+	FlagFile               string           `yaml:"flag_file"`
+	AdditionalFlagFile     string           `yaml:"additional_flag_file"`
+	Query                  string           `yaml:"query"`
+	HTTP                   string           `yaml:"http"`
+	HTTPIntervalMs         int64            `yaml:"http_interval_ms"`
+	IgnoreHTTPErrors       bool             `yaml:"ignore_http_errors"`
+	MaxLoad                map[string]int64 `yaml:"max_load"`
+	CriticalLoad           map[string]int64 `yaml:"critical_load"`
+	CriticalLoadIntervalMs int64            `yaml:"critical_load_interval_ms"`
+	CriticalLoadHibernateS int64            `yaml:"critical_load_hibernate_seconds"`
 }
 
 // CutoverConfig holds cutover settings
 type CutoverConfig struct {
-	LockTimeoutSeconds   int64  `yaml:"lock_timeout_seconds"`
-	PostponeFlagFile     string `yaml:"postpone_flag_file"`
-	PanicFlagFile        string `yaml:"panic_flag_file"`
-	OkToDropTable        bool   `yaml:"ok_to_drop_table"`
-	InitiallyDropOld     bool   `yaml:"initially_drop_old_table"`
-	InitiallyDropGhost   bool   `yaml:"initially_drop_ghost_table"`
-	TimestampOldTable    bool   `yaml:"timestamp_old_table"`
+	LockTimeoutSeconds int64  `yaml:"lock_timeout_seconds"`
+	PostponeFlagFile   string `yaml:"postpone_flag_file"`
+	PanicFlagFile      string `yaml:"panic_flag_file"`
+	OkToDropTable      bool   `yaml:"ok_to_drop_table"`
+	InitiallyDropOld   bool   `yaml:"initially_drop_old_table"`
+	InitiallyDropGhost bool   `yaml:"initially_drop_ghost_table"`
+	TimestampOldTable  bool   `yaml:"timestamp_old_table"`
 }
 
 // ServerConfig holds online control server settings
 type ServerConfig struct {
-	SocketFile     string `yaml:"socket_file"`
-	TCPPort        int64  `yaml:"tcp_port"`
-	DropSocket     bool   `yaml:"drop_socket"`
+	SocketFile string `yaml:"socket_file"`
+	TCPPort    int64  `yaml:"tcp_port"`
+	DropSocket bool   `yaml:"drop_socket"`
 }
 
 // HooksConfig holds hook script settings
 type HooksConfig struct {
-	Path          string `yaml:"path"`
-	HintMessage   string `yaml:"hint_message"`
-	HintOwner     string `yaml:"hint_owner"`
-	HintToken     string `yaml:"hint_token"`
-	StatusIntervalSec int64 `yaml:"status_interval_seconds"`
+	Path              string `yaml:"path"`
+	HintMessage       string `yaml:"hint_message"`
+	HintOwner         string `yaml:"hint_owner"`
+	HintToken         string `yaml:"hint_token"`
+	StatusIntervalSec int64  `yaml:"status_interval_seconds"`
 }
 
 // LoadFromFile loads configuration from a YAML file

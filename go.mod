@@ -1,4 +1,4 @@
-module github.com/your-org/pg-ost
+module github.com/takaidohigasi/pg-ost
 
 go 1.22
 

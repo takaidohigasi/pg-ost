@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	sqlpkg "github.com/your-org/pg-ost/internal/sql"
+	sqlpkg "github.com/takaidohigasi/pg-ost/internal/sql"
 )
 
 // PublicationManager manages PostgreSQL publications for logical replication

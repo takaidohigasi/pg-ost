@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 
-	"github.com/your-org/pg-ost/internal/base"
-	"github.com/your-org/pg-ost/internal/dml"
-	"github.com/your-org/pg-ost/internal/pg"
+	"github.com/takaidohigasi/pg-ost/internal/base"
+	"github.com/takaidohigasi/pg-ost/internal/dml"
+	"github.com/takaidohigasi/pg-ost/internal/pg"
 )
 
 // Reader reads from PostgreSQL logical replication stream

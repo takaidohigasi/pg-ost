@@ -11,10 +11,10 @@ import (
 
 	"github.com/jackc/pglogrepl"
 
-	"github.com/your-org/pg-ost/internal/base"
-	"github.com/your-org/pg-ost/internal/dml"
-	"github.com/your-org/pg-ost/internal/pg"
-	"github.com/your-org/pg-ost/internal/replication"
+	"github.com/takaidohigasi/pg-ost/internal/base"
+	"github.com/takaidohigasi/pg-ost/internal/dml"
+	"github.com/takaidohigasi/pg-ost/internal/pg"
+	"github.com/takaidohigasi/pg-ost/internal/replication"
 )
 
 // Streamer wraps the replication components for streaming DML events

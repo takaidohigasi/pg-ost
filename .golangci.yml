@@ -1,0 +1,53 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+    - gosec
+    - bodyclose
+    - noctx
+    - exportloopref
+    - whitespace
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+  govet:
+    check-shadowing: false
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/takaidohigasi/pg-ost
+  misspell:
+    locale: US
+  gosec:
+    excludes:
+      - G104  # Audit errors not checked (we handle this case by case)
+      - G304  # File path provided as taint input (expected for config files)
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gosec
+        - unparam
+    # Exclude known issues in generated code
+    - path: mock_
+      linters:
+        - unused
+  max-issues-per-linter: 50
+  max-same-issues: 10

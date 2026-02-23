@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/your-org/pg-ost/internal/base"
+	"github.com/takaidohigasi/pg-ost/internal/base"
 )
 
 // Server provides runtime control via Unix socket or TCP

@@ -75,12 +75,12 @@ type MigrationContext struct {
 
 	// Replica connection settings (for reading replication stream)
 	// If not set, primary connection is used for streaming
-	ReplicaHost                   string
-	ReplicaPort                   int
-	ReplicaUser                   string
-	ReplicaPassword               string
-	ReplicaSSLMode                string
-	SkipReplicaClusterValidation  bool // Skip validation that replica is in the same cluster as primary
+	ReplicaHost                  string
+	ReplicaPort                  int
+	ReplicaUser                  string
+	ReplicaPassword              string
+	ReplicaSSLMode               string
+	SkipReplicaClusterValidation bool // Skip validation that replica is in the same cluster as primary
 
 	// Replication settings
 	PublicationName     string
@@ -90,11 +90,11 @@ type MigrationContext struct {
 	lsnMutex            *sync.Mutex
 
 	// Table information
-	UniqueKeyColumns       []string
-	OriginalTableColumns   []string
-	GhostTableName         string
-	ChangelogTableName     string
-	OldTableName           string
+	UniqueKeyColumns        []string
+	OriginalTableColumns    []string
+	GhostTableName          string
+	ChangelogTableName      string
+	OldTableName            string
 	OriginalReplicaIdentity string
 
 	// Row copy tracking
@@ -137,12 +137,12 @@ type MigrationContext struct {
 	PanicFlagFile                       string
 
 	// Control flags (atomic)
-	ThrottleCommandedByUser              int64
-	HibernateUntil                       int64
-	CutOverCompleteFlag                  int64
-	InCutOverCriticalSectionFlag         int64
-	AllEventsUpToLockProcessedFlag       int64
-	CleanupImminentFlag                  int64
+	ThrottleCommandedByUser        int64
+	HibernateUntil                 int64
+	CutOverCompleteFlag            int64
+	InCutOverCriticalSectionFlag   int64
+	AllEventsUpToLockProcessedFlag int64
+	CleanupImminentFlag            int64
 
 	// Server settings
 	DropServeSocket bool
@@ -174,18 +174,18 @@ type MigrationContext struct {
 	RenameTablesEndTime time.Time
 
 	// Internal state
-	pointOfInterestTime          time.Time
-	pointOfInterestTimeMutex     *sync.Mutex
-	lastHeartbeatOnChangelogTime time.Time
+	pointOfInterestTime           time.Time
+	pointOfInterestTimeMutex      *sync.Mutex
+	lastHeartbeatOnChangelogTime  time.Time
 	lastHeartbeatOnChangelogMutex *sync.Mutex
-	throttleMutex                *sync.Mutex
-	throttleHTTPMutex            *sync.Mutex
-	configMutex                  *sync.Mutex
+	throttleMutex                 *sync.Mutex
+	throttleHTTPMutex             *sync.Mutex
+	configMutex                   *sync.Mutex
 
 	// Throttle state
-	isThrottled        bool
-	throttleReason     string
-	throttleReasonHint ThrottleReasonHint
+	isThrottled                bool
+	throttleReason             string
+	throttleReasonHint         ThrottleReasonHint
 	throttleGeneralCheckResult ThrottleCheckResult
 
 	// Panic channel
@@ -482,8 +482,8 @@ func (ctx *MigrationContext) GetReplicaHostPort() string {
 // defaultLogger is a simple default logger
 type defaultLogger struct{}
 
-func (l *defaultLogger) Debug(format string, args ...interface{}) {}
-func (l *defaultLogger) Info(format string, args ...interface{})  {}
+func (l *defaultLogger) Debug(format string, args ...interface{})   {}
+func (l *defaultLogger) Info(format string, args ...interface{})    {}
 func (l *defaultLogger) Warning(format string, args ...interface{}) {}
-func (l *defaultLogger) Error(format string, args ...interface{}) {}
-func (l *defaultLogger) Fatal(format string, args ...interface{}) {}
+func (l *defaultLogger) Error(format string, args ...interface{})   {}
+func (l *defaultLogger) Fatal(format string, args ...interface{})   {}

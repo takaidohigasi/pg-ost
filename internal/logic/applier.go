@@ -13,10 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/your-org/pg-ost/internal/base"
-	"github.com/your-org/pg-ost/internal/dml"
-	"github.com/your-org/pg-ost/internal/pg"
-	sqlpkg "github.com/your-org/pg-ost/internal/sql"
+	"github.com/takaidohigasi/pg-ost/internal/base"
+	"github.com/takaidohigasi/pg-ost/internal/dml"
+	"github.com/takaidohigasi/pg-ost/internal/pg"
+	sqlpkg "github.com/takaidohigasi/pg-ost/internal/sql"
 )
 
 // Applier applies changes to the ghost table

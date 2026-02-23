@@ -15,9 +15,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/your-org/pg-ost/internal/base"
-	"github.com/your-org/pg-ost/internal/config"
-	"github.com/your-org/pg-ost/internal/logic"
+	"github.com/takaidohigasi/pg-ost/internal/base"
+	"github.com/takaidohigasi/pg-ost/internal/config"
+	"github.com/takaidohigasi/pg-ost/internal/logic"
 )
 
 // AppVersion is set at build time

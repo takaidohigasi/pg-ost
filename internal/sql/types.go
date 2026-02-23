@@ -62,10 +62,10 @@ func (cl *ColumnList) Len() int {
 
 // UniqueKey represents a unique key (primary key or unique index)
 type UniqueKey struct {
-	Name        string
-	Columns     []string
-	IsPrimary   bool
-	IsNullable  bool // True if any column is nullable
+	Name       string
+	Columns    []string
+	IsPrimary  bool
+	IsNullable bool // True if any column is nullable
 }
 
 // NewUniqueKey creates a new unique key

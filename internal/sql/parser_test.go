@@ -11,13 +11,13 @@ import (
 
 func TestParseAlterStatement(t *testing.T) {
 	tests := []struct {
-		name        string
-		statement   string
-		wantErr     bool
-		wantRename  bool
-		wantAdd     bool
-		wantDrop    bool
-		wantClause  string
+		name       string
+		statement  string
+		wantErr    bool
+		wantRename bool
+		wantAdd    bool
+		wantDrop   bool
+		wantClause string
 	}{
 		{
 			name:       "simple add column",

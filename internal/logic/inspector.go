@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/your-org/pg-ost/internal/base"
-	"github.com/your-org/pg-ost/internal/pg"
-	sqlpkg "github.com/your-org/pg-ost/internal/sql"
+	"github.com/takaidohigasi/pg-ost/internal/base"
+	"github.com/takaidohigasi/pg-ost/internal/pg"
+	sqlpkg "github.com/takaidohigasi/pg-ost/internal/sql"
 )
 
 // Inspector inspects the original table structure and validates conditions
