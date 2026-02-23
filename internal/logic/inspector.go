@@ -408,5 +408,65 @@ func (i *Inspector) ValidateWALLevel() error {
 		return fmt.Errorf("wal_level must be 'logical', got '%s'. Set wal_level = 'logical' in postgresql.conf and restart", walLevel)
 	}
 
+	i.migrationContext.Log.Info("wal_level = %s", walLevel)
+	return nil
+}
+
+// ValidatePostgreSQLVersion checks that PostgreSQL version is 14 or higher
+func (i *Inspector) ValidatePostgreSQLVersion() error {
+	if i.version == nil {
+		return fmt.Errorf("PostgreSQL version not available")
+	}
+
+	if !i.version.SupportsStreamingLargeTransactions() {
+		return fmt.Errorf("PostgreSQL %s is not supported. pg-ost requires PostgreSQL 14 or higher for streaming in-progress transactions", i.version)
+	}
+
+	return nil
+}
+
+// ValidateReplicationPermission checks that the user has replication permission
+func (i *Inspector) ValidateReplicationPermission() error {
+	ctx := context.Background()
+
+	var hasReplication bool
+	err := i.db.QueryRowContext(ctx, `
+		SELECT rolreplication OR rolsuper
+		FROM pg_roles
+		WHERE rolname = current_user
+	`).Scan(&hasReplication)
+
+	if err != nil {
+		return fmt.Errorf("failed to check replication permission: %w", err)
+	}
+
+	if !hasReplication {
+		return fmt.Errorf("user '%s' does not have replication permission. Grant REPLICATION role or use a superuser", i.migrationContext.User)
+	}
+
+	i.migrationContext.Log.Info("User has replication permission")
+	return nil
+}
+
+// ValidateRequirements validates all PostgreSQL requirements for pg-ost
+func (i *Inspector) ValidateRequirements() error {
+	i.migrationContext.Log.Info("Validating PostgreSQL requirements...")
+
+	// Check PostgreSQL version
+	if err := i.ValidatePostgreSQLVersion(); err != nil {
+		return err
+	}
+
+	// Check wal_level
+	if err := i.ValidateWALLevel(); err != nil {
+		return err
+	}
+
+	// Check replication permission
+	if err := i.ValidateReplicationPermission(); err != nil {
+		return err
+	}
+
+	i.migrationContext.Log.Info("All requirements validated successfully")
 	return nil
 }

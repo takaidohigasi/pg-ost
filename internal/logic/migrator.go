@@ -134,84 +134,89 @@ func (m *Migrator) Migrate() error {
 		return fmt.Errorf("failed to initiate inspector: %w", err)
 	}
 
-	// Step 3: Validate table and get unique key
+	// Step 3: Validate PostgreSQL requirements (version, wal_level, replication permission)
+	if err := m.inspector.ValidateRequirements(); err != nil {
+		return fmt.Errorf("requirements validation failed: %w", err)
+	}
+
+	// Step 4: Validate table and get unique key
 	if err := m.inspector.ValidateOriginalTable(); err != nil {
 		return fmt.Errorf("table validation failed: %w", err)
 	}
 
-	// Step 4: Set REPLICA IDENTITY FULL
+	// Step 5: Set REPLICA IDENTITY FULL
 	if err := m.inspector.EnsureReplicaIdentityFull(); err != nil {
 		return fmt.Errorf("failed to set replica identity: %w", err)
 	}
 
-	// Step 5: Initialize applier
+	// Step 6: Initialize applier
 	if err := m.initiateApplier(); err != nil {
 		return fmt.Errorf("failed to initiate applier: %w", err)
 	}
 
-	// Step 6: Create publication and replication slot
+	// Step 7: Create publication and replication slot
 	if err := m.initiateStreaming(); err != nil {
 		return fmt.Errorf("failed to initiate streaming: %w", err)
 	}
 
-	// Step 7: Create ghost table
+	// Step 8: Create ghost table
 	if err := m.applier.CreateGhostTable(); err != nil {
 		return fmt.Errorf("failed to create ghost table: %w", err)
 	}
 
-	// Step 8: Apply ALTER to ghost table
+	// Step 9: Apply ALTER to ghost table
 	if err := m.applier.AlterGhost(); err != nil {
 		return fmt.Errorf("failed to alter ghost table: %w", err)
 	}
 
-	// Step 9: Create changelog table
+	// Step 10: Create changelog table
 	if err := m.applier.CreateChangelogTable(); err != nil {
 		return fmt.Errorf("failed to create changelog table: %w", err)
 	}
 
-	// Step 10: Start streaming DML events (in background)
+	// Step 11: Start streaming DML events (in background)
 	go m.streamEvents()
 
-	// Step 11: Initialize throttler
+	// Step 12: Initialize throttler
 	if err := m.initiateThrottler(); err != nil {
 		return fmt.Errorf("failed to initiate throttler: %w", err)
 	}
 
-	// Step 12: Initialize server for online control (optional)
+	// Step 13: Initialize server for online control (optional)
 	if err := m.initiateServer(); err != nil {
 		return fmt.Errorf("failed to initiate server: %w", err)
 	}
 
-	// Step 13: Count rows (optionally)
+	// Step 14: Count rows (optionally)
 	if err := m.countTableRows(); err != nil {
 		return fmt.Errorf("failed to count table rows: %w", err)
 	}
 
-	// Step 14: Read migration range
+	// Step 15: Read migration range
 	if err := m.readMigrationRangeValues(); err != nil {
 		return fmt.Errorf("failed to read migration range: %w", err)
 	}
 
-	// Step 15: Start applying events (in background)
+	// Step 16: Start applying events (in background)
 	go m.executeWriteFuncs()
 
-	// Step 16: Start row copy
+	// Step 17: Start row copy
 	go m.iterateChunks()
 
-	// Step 17: Status printing
+	// Step 18: Status printing
 	go m.printStatus()
 
-	// Step 18: Wait for row copy to complete
+	// Step 19: Wait for row copy to complete
 	if err := m.waitForRowCopy(); err != nil {
 		return fmt.Errorf("row copy failed: %w", err)
 	}
 
-	// Step 19: Cutover
+	// Step 20: Cutover
 	if err := m.cutOver(); err != nil {
 		return fmt.Errorf("cutover failed: %w", err)
 	}
 
-	// Step 20: Cleanup
+	// Step 21: Cleanup
 	if err := m.cleanup(); err != nil {
 		m.migrationContext.Log.Warning("Cleanup had errors: %v", err)
 	}
