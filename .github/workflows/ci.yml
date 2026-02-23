@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.56
+          args: --timeout=5m
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out ./internal/...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+
+  e2e-test:
+    name: E2E Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Start PostgreSQL primary and replica
+        working-directory: ./e2e
+        run: docker compose up -d
+
+      - name: Wait for PostgreSQL primary
+        working-directory: ./e2e
+        run: |
+          for i in {1..30}; do
+            if docker compose exec -T postgres-primary pg_isready -U pgost -d pgost_test > /dev/null 2>&1; then
+              echo "PostgreSQL primary is ready!"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "Error: PostgreSQL primary did not become ready in time"
+              docker compose logs postgres-primary
+              exit 1
+            fi
+            echo "Waiting for primary... ($i/30)"
+            sleep 1
+          done
+
+      - name: Wait for PostgreSQL replica
+        working-directory: ./e2e
+        run: |
+          for i in {1..60}; do
+            if docker compose exec -T postgres-replica pg_isready -U pgost -d pgost_test > /dev/null 2>&1; then
+              IS_REPLICA=$(docker compose exec -T postgres-replica psql -U pgost -d pgost_test -t -c "SELECT pg_is_in_recovery();" 2>/dev/null | tr -d ' \n' || echo "f")
+              if [ "$IS_REPLICA" = "t" ]; then
+                echo "PostgreSQL replica is ready and in recovery mode!"
+                break
+              fi
+            fi
+            if [ $i -eq 60 ]; then
+              echo "Warning: PostgreSQL replica did not become ready in time"
+              docker compose logs postgres-replica
+              break
+            fi
+            echo "Waiting for replica... ($i/60)"
+            sleep 2
+          done
+
+      - name: Build binary
+        run: go build -o bin/pg-ost ./cmd/pg-ost
+
+      - name: Run E2E tests
+        run: go test -tags=e2e -v -timeout 15m ./e2e/...
+
+      - name: Cleanup
+        if: always()
+        working-directory: ./e2e
+        run: docker compose down -v
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags "-X main.AppVersion=${{ github.sha }}" -o bin/pg-ost-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/pg-ost
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-ost-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/pg-ost-${{ matrix.goos }}-${{ matrix.goarch }}
