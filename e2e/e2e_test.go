@@ -30,30 +30,35 @@ import (
 )
 
 const (
-	defaultHost     = "localhost"
-	defaultPort     = 15432
-	defaultUser     = "pgost"
-	defaultPassword = "pgost"
-	defaultDatabase = "pgost_test"
+	defaultHost        = "localhost"
+	defaultPort        = 15432
+	defaultReplicaPort = 15433
+	defaultUser        = "pgost"
+	defaultPassword    = "pgost"
+	defaultDatabase    = "pgost_test"
 )
 
 // TestConfig holds test configuration
 type TestConfig struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	Database string
+	Host        string
+	Port        int
+	User        string
+	Password    string
+	Database    string
+	ReplicaHost string
+	ReplicaPort int
 }
 
 // getTestConfig returns test configuration from environment or defaults
 func getTestConfig() *TestConfig {
 	cfg := &TestConfig{
-		Host:     defaultHost,
-		Port:     defaultPort,
-		User:     defaultUser,
-		Password: defaultPassword,
-		Database: defaultDatabase,
+		Host:        defaultHost,
+		Port:        defaultPort,
+		User:        defaultUser,
+		Password:    defaultPassword,
+		Database:    defaultDatabase,
+		ReplicaHost: defaultHost,
+		ReplicaPort: defaultReplicaPort,
 	}
 
 	if h := os.Getenv("PGOST_TEST_HOST"); h != "" {
@@ -67,6 +72,9 @@ func getTestConfig() *TestConfig {
 	}
 	if d := os.Getenv("PGOST_TEST_DATABASE"); d != "" {
 		cfg.Database = d
+	}
+	if h := os.Getenv("PGOST_TEST_REPLICA_HOST"); h != "" {
+		cfg.ReplicaHost = h
 	}
 
 	return cfg
@@ -826,4 +834,287 @@ func TestMultipleAlterOperations(t *testing.T) {
 	}
 
 	t.Log("TestMultipleAlterOperations passed")
+}
+
+// TestReplicaHost tests migration using replica-host for streaming replication
+func TestReplicaHost(t *testing.T) {
+	cfg := getTestConfig()
+
+	// Check if replica is available
+	replicaDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		cfg.ReplicaHost, cfg.ReplicaPort, cfg.User, cfg.Password, cfg.Database)
+	replicaDB, err := sql.Open("pgx", replicaDSN)
+	if err != nil {
+		t.Skipf("Skipping replica test: cannot connect to replica: %v", err)
+	}
+
+	// Check replica is in recovery mode
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			replicaDB.Close()
+			t.Skipf("Skipping replica test: replica not ready in time")
+		default:
+			if err := replicaDB.PingContext(ctx); err == nil {
+				// Check if it's actually a replica
+				var isInRecovery bool
+				err := replicaDB.QueryRowContext(ctx, "SELECT pg_is_in_recovery()").Scan(&isInRecovery)
+				if err != nil {
+					time.Sleep(500 * time.Millisecond)
+					continue
+				}
+				if !isInRecovery {
+					replicaDB.Close()
+					t.Skipf("Skipping replica test: database is not in recovery mode (not a replica)")
+				}
+				goto ready
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+ready:
+	replicaDB.Close()
+
+	// Connect to primary
+	db := connectDB(t, cfg)
+	defer db.Close()
+
+	tableName := "test_replica_host"
+	cleanupTestTable(t, db, tableName)
+	setupTestTable(t, db, tableName, 1000)
+	defer cleanupTestTable(t, db, tableName)
+
+	// Create migration context with replica configuration
+	migCtx := createMigrationContext(cfg, tableName, "ADD COLUMN replica_test_col VARCHAR(100) DEFAULT 'from_replica'")
+	migCtx.Log = &testLogger{t: t}
+	migCtx.OkToDropTable = true
+
+	// Configure replica for streaming
+	migCtx.ReplicaHost = cfg.ReplicaHost
+	migCtx.ReplicaPort = cfg.ReplicaPort
+	migCtx.ReplicaUser = cfg.User
+	migCtx.ReplicaPassword = cfg.Password
+	migCtx.SkipReplicaClusterValidation = true // Skip cluster validation in test environment
+
+	t.Logf("Running migration with replica-host=%s:%d", cfg.ReplicaHost, cfg.ReplicaPort)
+
+	// Run migration
+	migrator := logic.NewMigrator(migCtx, "test")
+	err = migrator.Migrate()
+	if err != nil {
+		t.Fatalf("Migration with replica-host failed: %v", err)
+	}
+
+	// Verify column was added
+	var count int
+	err = db.QueryRow(fmt.Sprintf(`
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = '%s' AND column_name = 'replica_test_col'
+	`, tableName)).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to verify column: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected column 'replica_test_col' to exist, but it doesn't")
+	}
+
+	// Verify data integrity
+	var rowCount int
+	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&rowCount)
+	if err != nil {
+		t.Fatalf("Failed to count rows: %v", err)
+	}
+	if rowCount != 1000 {
+		t.Errorf("Expected 1000 rows, got %d", rowCount)
+	}
+
+	// Verify default value
+	var colCount int
+	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE replica_test_col = 'from_replica'", tableName)).Scan(&colCount)
+	if err != nil {
+		t.Fatalf("Failed to verify default value: %v", err)
+	}
+	if colCount != 1000 {
+		t.Errorf("Expected all 1000 rows to have replica_test_col='from_replica', got %d", colCount)
+	}
+
+	t.Log("TestReplicaHost passed")
+}
+
+// TestReplicaHostWithConcurrentDML tests migration with replica-host during concurrent DML operations
+func TestReplicaHostWithConcurrentDML(t *testing.T) {
+	cfg := getTestConfig()
+
+	// Check if replica is available
+	replicaDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		cfg.ReplicaHost, cfg.ReplicaPort, cfg.User, cfg.Password, cfg.Database)
+	replicaDB, err := sql.Open("pgx", replicaDSN)
+	if err != nil {
+		t.Skipf("Skipping replica test: cannot connect to replica: %v", err)
+	}
+
+	// Check replica is in recovery mode
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			replicaDB.Close()
+			t.Skipf("Skipping replica test: replica not ready in time")
+		default:
+			if err := replicaDB.PingContext(ctx); err == nil {
+				var isInRecovery bool
+				err := replicaDB.QueryRowContext(ctx, "SELECT pg_is_in_recovery()").Scan(&isInRecovery)
+				if err != nil {
+					time.Sleep(500 * time.Millisecond)
+					continue
+				}
+				if !isInRecovery {
+					replicaDB.Close()
+					t.Skipf("Skipping replica test: database is not in recovery mode (not a replica)")
+				}
+				goto ready
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+ready:
+	replicaDB.Close()
+
+	// Connect to primary
+	db := connectDB(t, cfg)
+	defer db.Close()
+
+	tableName := "test_replica_concurrent"
+	cleanupTestTable(t, db, tableName)
+	setupTestTable(t, db, tableName, 500)
+	defer cleanupTestTable(t, db, tableName)
+
+	// Create migration context with replica configuration
+	migCtx := createMigrationContext(cfg, tableName, "ADD COLUMN concurrent_col BOOLEAN DEFAULT false")
+	migCtx.Log = &testLogger{t: t}
+	migCtx.OkToDropTable = true
+	migCtx.ChunkSize = 50 // Smaller chunks to allow DML interleaving
+
+	// Configure replica for streaming
+	migCtx.ReplicaHost = cfg.ReplicaHost
+	migCtx.ReplicaPort = cfg.ReplicaPort
+	migCtx.ReplicaUser = cfg.User
+	migCtx.ReplicaPassword = cfg.Password
+	migCtx.SkipReplicaClusterValidation = true
+
+	// Start concurrent DML operations on primary
+	var wg sync.WaitGroup
+	stopDML := make(chan struct{})
+	dmlErrors := make(chan error, 100)
+
+	// Insert goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		conn, err := sql.Open("pgx", cfg.getDSN())
+		if err != nil {
+			dmlErrors <- err
+			return
+		}
+		defer conn.Close()
+
+		i := 10000
+		for {
+			select {
+			case <-stopDML:
+				return
+			default:
+				_, err := conn.Exec(fmt.Sprintf(
+					"INSERT INTO %s (name, email) VALUES ($1, $2)",
+					tableName), fmt.Sprintf("replica_user%d", i), fmt.Sprintf("replica%d@example.com", i))
+				if err != nil {
+					continue
+				}
+				i++
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}()
+
+	// Update goroutine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		conn, err := sql.Open("pgx", cfg.getDSN())
+		if err != nil {
+			dmlErrors <- err
+			return
+		}
+		defer conn.Close()
+
+		for {
+			select {
+			case <-stopDML:
+				return
+			default:
+				_, err := conn.Exec(fmt.Sprintf(
+					"UPDATE %s SET name = name || '_rep' WHERE id = (SELECT id FROM %s ORDER BY RANDOM() LIMIT 1)",
+					tableName, tableName))
+				if err != nil {
+					continue
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+	}()
+
+	// Give DML time to start
+	time.Sleep(100 * time.Millisecond)
+
+	t.Logf("Running migration with replica-host=%s:%d and concurrent DML", cfg.ReplicaHost, cfg.ReplicaPort)
+
+	// Run migration
+	migrator := logic.NewMigrator(migCtx, "test")
+	err = migrator.Migrate()
+
+	// Stop DML
+	close(stopDML)
+	wg.Wait()
+
+	if err != nil {
+		t.Fatalf("Migration with replica-host failed: %v", err)
+	}
+
+	// Check for DML errors
+	close(dmlErrors)
+	for err := range dmlErrors {
+		t.Errorf("DML error: %v", err)
+	}
+
+	// Verify the new column exists
+	var colCount int
+	err = db.QueryRow(fmt.Sprintf(`
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = '%s' AND column_name = 'concurrent_col'
+	`, tableName)).Scan(&colCount)
+	if err != nil {
+		t.Fatalf("Failed to verify column: %v", err)
+	}
+	if colCount != 1 {
+		t.Errorf("Expected column 'concurrent_col' to exist")
+	}
+
+	// Verify some inserts made it through
+	var rowCount int
+	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&rowCount)
+	if err != nil {
+		t.Fatalf("Failed to count rows: %v", err)
+	}
+	t.Logf("Final row count: %d (started with 500)", rowCount)
+
+	if rowCount < 400 {
+		t.Errorf("Expected at least 400 rows, got %d", rowCount)
+	}
+
+	t.Log("TestReplicaHostWithConcurrentDML passed")
 }

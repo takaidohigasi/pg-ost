@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  postgres:
+  postgres-primary:
     image: postgres:16
-    container_name: pg-ost-test-db
+    container_name: pg-ost-test-db-primary
     environment:
       POSTGRES_USER: pgost
       POSTGRES_PASSWORD: pgost
@@ -18,13 +18,79 @@ services:
       - "max_replication_slots=10"
       - "-c"
       - "max_wal_senders=10"
+      - "-c"
+      - "hot_standby=on"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pgost -d pgost_test"]
       interval: 2s
       timeout: 5s
       retries: 10
     volumes:
-      - pg-ost-data:/var/lib/postgresql/data
+      - pg-ost-primary-data:/var/lib/postgresql/data
+    networks:
+      - pg-ost-network
+
+  postgres-replica:
+    image: postgres:16
+    container_name: pg-ost-test-db-replica
+    environment:
+      POSTGRES_USER: pgost
+      POSTGRES_PASSWORD: pgost
+      POSTGRES_DB: pgost_test
+      PGUSER: pgost
+    ports:
+      - "15433:5432"
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # Wait for primary to be ready
+        until pg_isready -h postgres-primary -U pgost -d pgost_test; do
+          echo "Waiting for primary..."
+          sleep 1
+        done
+
+        # Clear data directory
+        rm -rf /var/lib/postgresql/data/*
+
+        # Create base backup from primary
+        PGPASSWORD=pgost pg_basebackup -h postgres-primary -U pgost -D /var/lib/postgresql/data -Fp -Xs -P -R
+
+        # Configure replica settings
+        echo "primary_conninfo = 'host=postgres-primary port=5432 user=pgost password=pgost'" >> /var/lib/postgresql/data/postgresql.auto.conf
+
+        # Create standby signal file
+        touch /var/lib/postgresql/data/standby.signal
+
+        # Set permissions
+        chmod 0700 /var/lib/postgresql/data
+        chown -R postgres:postgres /var/lib/postgresql/data
+
+        # Start PostgreSQL
+        exec docker-entrypoint.sh postgres \
+          -c wal_level=logical \
+          -c max_replication_slots=10 \
+          -c max_wal_senders=10 \
+          -c hot_standby=on \
+          -c hot_standby_feedback=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pgost -d pgost_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    volumes:
+      - pg-ost-replica-data:/var/lib/postgresql/data
+    networks:
+      - pg-ost-network
+
+networks:
+  pg-ost-network:
+    driver: bridge
 
 volumes:
-  pg-ost-data:
+  pg-ost-primary-data:
+  pg-ost-replica-data:

@@ -21,25 +21,45 @@ fi
 
 cd "$SCRIPT_DIR"
 
-# Start PostgreSQL
-echo "Starting PostgreSQL..."
+# Start PostgreSQL primary and replica
+echo "Starting PostgreSQL primary and replica..."
 $DOCKER_COMPOSE up -d
 
-# Wait for PostgreSQL to be ready
-echo "Waiting for PostgreSQL to be ready..."
+# Wait for primary to be ready
+echo "Waiting for PostgreSQL primary to be ready..."
 for i in {1..30}; do
-    if $DOCKER_COMPOSE exec -T postgres pg_isready -U pgost -d pgost_test > /dev/null 2>&1; then
-        echo "PostgreSQL is ready!"
+    if $DOCKER_COMPOSE exec -T postgres-primary pg_isready -U pgost -d pgost_test > /dev/null 2>&1; then
+        echo "PostgreSQL primary is ready!"
         break
     fi
     if [ $i -eq 30 ]; then
-        echo "Error: PostgreSQL did not become ready in time"
-        $DOCKER_COMPOSE logs postgres
+        echo "Error: PostgreSQL primary did not become ready in time"
+        $DOCKER_COMPOSE logs postgres-primary
         $DOCKER_COMPOSE down -v
         exit 1
     fi
-    echo "Waiting... ($i/30)"
+    echo "Waiting for primary... ($i/30)"
     sleep 1
+done
+
+# Wait for replica to be ready
+echo "Waiting for PostgreSQL replica to be ready..."
+for i in {1..60}; do
+    if $DOCKER_COMPOSE exec -T postgres-replica pg_isready -U pgost -d pgost_test > /dev/null 2>&1; then
+        # Verify it's actually in recovery mode (is a replica)
+        IS_REPLICA=$($DOCKER_COMPOSE exec -T postgres-replica psql -U pgost -d pgost_test -t -c "SELECT pg_is_in_recovery();" 2>/dev/null | tr -d ' \n' || echo "f")
+        if [ "$IS_REPLICA" = "t" ]; then
+            echo "PostgreSQL replica is ready and in recovery mode!"
+            break
+        fi
+    fi
+    if [ $i -eq 60 ]; then
+        echo "Warning: PostgreSQL replica did not become ready in time (replica tests will be skipped)"
+        $DOCKER_COMPOSE logs postgres-replica
+        break
+    fi
+    echo "Waiting for replica... ($i/60)"
+    sleep 2
 done
 
 # Run the tests
@@ -53,7 +73,7 @@ go build -o bin/pg-ost ./cmd/pg-ost
 
 # Run tests
 TEST_RESULT=0
-go test -tags=e2e -v -timeout 10m ./e2e/... || TEST_RESULT=$?
+go test -tags=e2e -v -timeout 15m ./e2e/... || TEST_RESULT=$?
 
 # Cleanup
 echo ""
