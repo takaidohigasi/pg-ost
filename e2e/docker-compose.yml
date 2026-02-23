@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: pg-ost-test-db
+    environment:
+      POSTGRES_USER: pgost
+      POSTGRES_PASSWORD: pgost
+      POSTGRES_DB: pgost_test
+    ports:
+      - "15432:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "max_wal_senders=10"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pgost -d pgost_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - pg-ost-data:/var/lib/postgresql/data
+
+volumes:
+  pg-ost-data:

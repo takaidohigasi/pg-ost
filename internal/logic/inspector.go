@@ -1,0 +1,412 @@
+/*
+   Copyright 2024
+   pg-ost: PostgreSQL Online Schema Transformation
+*/
+
+package logic
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"sync/atomic"
+
+	"github.com/your-org/pg-ost/internal/base"
+	"github.com/your-org/pg-ost/internal/pg"
+	sqlpkg "github.com/your-org/pg-ost/internal/sql"
+)
+
+// Inspector inspects the original table structure and validates conditions
+type Inspector struct {
+	connectionConfig *pg.ConnectionConfig
+	db               *sql.DB
+	migrationContext *base.MigrationContext
+	version          *pg.PostgreSQLVersion
+}
+
+// NewInspector creates a new Inspector
+func NewInspector(ctx *base.MigrationContext) *Inspector {
+	return &Inspector{
+		migrationContext: ctx,
+		connectionConfig: &pg.ConnectionConfig{
+			Host:     ctx.Host,
+			Port:     ctx.Port,
+			User:     ctx.User,
+			Password: ctx.Password,
+			Database: ctx.DatabaseName,
+			SSLMode:  ctx.SSLMode,
+		},
+	}
+}
+
+// InitDBConnections initializes database connections
+func (i *Inspector) InitDBConnections() error {
+	ctx := context.Background()
+	db, err := i.connectionConfig.Connect(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+	i.db = db
+
+	// Get PostgreSQL version
+	version, err := pg.GetVersion(ctx, db)
+	if err != nil {
+		return fmt.Errorf("failed to get version: %w", err)
+	}
+	i.version = version
+
+	if !version.SupportsLogicalReplication() {
+		return fmt.Errorf("PostgreSQL %s does not support logical replication (requires 10+)", version)
+	}
+
+	i.migrationContext.Log.Info("Connected to PostgreSQL %s", version)
+	return nil
+}
+
+// Close closes the database connection
+func (i *Inspector) Close() {
+	if i.db != nil {
+		i.db.Close()
+	}
+}
+
+// ValidateOriginalTable validates the original table exists and is suitable
+func (i *Inspector) ValidateOriginalTable() error {
+	ctx := context.Background()
+
+	// Check table exists
+	exists, err := i.tableExists(ctx, i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("table %s.%s does not exist",
+			i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+	}
+
+	// Get unique key
+	uniqueKey, err := i.getBestUniqueKey(ctx)
+	if err != nil {
+		return err
+	}
+	if uniqueKey == nil {
+		return fmt.Errorf("table %s.%s has no PRIMARY KEY or UNIQUE index",
+			i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+	}
+
+	i.migrationContext.UniqueKeyColumns = uniqueKey.Columns
+	i.migrationContext.Log.Info("Using unique key: %s", uniqueKey.String())
+
+	// Get table columns
+	columns, err := i.getTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	i.migrationContext.OriginalTableColumns = columns.Names()
+
+	return nil
+}
+
+// tableExists checks if a table exists
+func (i *Inspector) tableExists(ctx context.Context, schemaName, tableName string) (bool, error) {
+	var count int
+	err := i.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.tables
+		WHERE table_schema = $1 AND table_name = $2
+	`, schemaName, tableName).Scan(&count)
+
+	if err != nil {
+		return false, fmt.Errorf("failed to check table existence: %w", err)
+	}
+
+	return count > 0, nil
+}
+
+// getBestUniqueKey finds the best unique key for the table (prefer PK)
+func (i *Inspector) getBestUniqueKey(ctx context.Context) (*sqlpkg.UniqueKey, error) {
+	// First, try to get the primary key
+	pk, err := i.getPrimaryKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if pk != nil {
+		return pk, nil
+	}
+
+	// Fall back to unique indexes
+	uniqueKeys, err := i.getUniqueIndexes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(uniqueKeys) == 0 {
+		return nil, nil
+	}
+
+	// Prefer non-nullable unique keys
+	for _, uk := range uniqueKeys {
+		if !uk.IsNullable {
+			return uk, nil
+		}
+	}
+
+	// Return first unique key
+	return uniqueKeys[0], nil
+}
+
+// getPrimaryKey gets the primary key for the table
+func (i *Inspector) getPrimaryKey(ctx context.Context) (*sqlpkg.UniqueKey, error) {
+	rows, err := i.db.QueryContext(ctx, `
+		SELECT a.attname
+		FROM pg_index i
+		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+		JOIN pg_class c ON c.oid = i.indrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1
+		  AND c.relname = $2
+		  AND i.indisprimary
+		ORDER BY array_position(i.indkey, a.attnum)
+	`, i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get primary key: %w", err)
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var colName string
+		if err := rows.Scan(&colName); err != nil {
+			return nil, fmt.Errorf("failed to scan column: %w", err)
+		}
+		columns = append(columns, colName)
+	}
+
+	if len(columns) == 0 {
+		return nil, nil
+	}
+
+	return sqlpkg.NewUniqueKey("PRIMARY", columns, true), nil
+}
+
+// getUniqueIndexes gets unique indexes for the table
+func (i *Inspector) getUniqueIndexes(ctx context.Context) ([]*sqlpkg.UniqueKey, error) {
+	rows, err := i.db.QueryContext(ctx, `
+		SELECT i.relname as index_name,
+		       array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+		       bool_or(a.attnotnull = false) as has_nullable
+		FROM pg_index ix
+		JOIN pg_class i ON i.oid = ix.indexrelid
+		JOIN pg_class c ON c.oid = ix.indrelid
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(ix.indkey)
+		WHERE n.nspname = $1
+		  AND c.relname = $2
+		  AND ix.indisunique
+		  AND NOT ix.indisprimary
+		GROUP BY i.relname
+		ORDER BY i.relname
+	`, i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unique indexes: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []*sqlpkg.UniqueKey
+	for rows.Next() {
+		var indexName string
+		var columns []string
+		var hasNullable bool
+
+		if err := rows.Scan(&indexName, &columns, &hasNullable); err != nil {
+			return nil, fmt.Errorf("failed to scan index: %w", err)
+		}
+
+		uk := sqlpkg.NewUniqueKey(indexName, columns, false)
+		uk.IsNullable = hasNullable
+		keys = append(keys, uk)
+	}
+
+	return keys, nil
+}
+
+// getTableColumns gets the columns of the table
+func (i *Inspector) getTableColumns(ctx context.Context) (*sqlpkg.ColumnList, error) {
+	rows, err := i.db.QueryContext(ctx, `
+		SELECT column_name, data_type, is_nullable, column_default, ordinal_position
+		FROM information_schema.columns
+		WHERE table_schema = $1 AND table_name = $2
+		ORDER BY ordinal_position
+	`, i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get columns: %w", err)
+	}
+	defer rows.Close()
+
+	columns := sqlpkg.NewColumnList()
+	for rows.Next() {
+		var col sqlpkg.Column
+		var isNullable string
+		if err := rows.Scan(&col.Name, &col.Type, &isNullable, &col.DefaultValue, &col.OrdinalPos); err != nil {
+			return nil, fmt.Errorf("failed to scan column: %w", err)
+		}
+		col.IsNullable = (isNullable == "YES")
+		columns.Add(col)
+	}
+
+	return columns, nil
+}
+
+// EnsureReplicaIdentityFull sets REPLICA IDENTITY FULL on the source table
+func (i *Inspector) EnsureReplicaIdentityFull() error {
+	ctx := context.Background()
+
+	// Get current replica identity
+	var replicaIdentity string
+	err := i.db.QueryRowContext(ctx, `
+		SELECT CASE relreplident
+			WHEN 'd' THEN 'DEFAULT'
+			WHEN 'n' THEN 'NOTHING'
+			WHEN 'f' THEN 'FULL'
+			WHEN 'i' THEN 'INDEX'
+		END
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 AND c.relname = $2
+	`, i.migrationContext.SchemaName, i.migrationContext.OriginalTableName).Scan(&replicaIdentity)
+
+	if err != nil {
+		return fmt.Errorf("failed to get replica identity: %w", err)
+	}
+
+	i.migrationContext.OriginalReplicaIdentity = replicaIdentity
+
+	if replicaIdentity == "FULL" {
+		i.migrationContext.Log.Debug("Table already has REPLICA IDENTITY FULL")
+		return nil
+	}
+
+	// Set REPLICA IDENTITY FULL
+	query := fmt.Sprintf(
+		"ALTER TABLE %s.%s REPLICA IDENTITY FULL",
+		sqlpkg.QuoteIdentifier(i.migrationContext.SchemaName),
+		sqlpkg.QuoteIdentifier(i.migrationContext.OriginalTableName),
+	)
+
+	_, err = i.db.ExecContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to set replica identity: %w", err)
+	}
+
+	i.migrationContext.Log.Info("Set REPLICA IDENTITY FULL on %s.%s",
+		i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+	return nil
+}
+
+// RestoreReplicaIdentity restores the original replica identity
+func (i *Inspector) RestoreReplicaIdentity() error {
+	if i.migrationContext.OriginalReplicaIdentity == "" ||
+		i.migrationContext.OriginalReplicaIdentity == "FULL" {
+		return nil
+	}
+
+	ctx := context.Background()
+
+	query := fmt.Sprintf(
+		"ALTER TABLE %s.%s REPLICA IDENTITY %s",
+		sqlpkg.QuoteIdentifier(i.migrationContext.SchemaName),
+		sqlpkg.QuoteIdentifier(i.migrationContext.OriginalTableName),
+		i.migrationContext.OriginalReplicaIdentity,
+	)
+
+	_, err := i.db.ExecContext(ctx, query)
+	if err != nil {
+		return fmt.Errorf("failed to restore replica identity: %w", err)
+	}
+
+	i.migrationContext.Log.Info("Restored REPLICA IDENTITY %s on %s.%s",
+		i.migrationContext.OriginalReplicaIdentity,
+		i.migrationContext.SchemaName,
+		i.migrationContext.OriginalTableName)
+	return nil
+}
+
+// EstimateTableRows estimates the row count using statistics
+func (i *Inspector) EstimateTableRows() error {
+	ctx := context.Background()
+
+	var estimate int64
+	err := i.db.QueryRowContext(ctx, `
+		SELECT reltuples::bigint
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 AND c.relname = $2
+	`, i.migrationContext.SchemaName, i.migrationContext.OriginalTableName).Scan(&estimate)
+
+	if err != nil {
+		return fmt.Errorf("failed to estimate rows: %w", err)
+	}
+
+	if estimate < 0 {
+		estimate = 0
+	}
+
+	atomic.StoreInt64(&i.migrationContext.RowsEstimate, estimate)
+	i.migrationContext.UsedRowsEstimateMethod = base.TableStatsRowsEstimate
+	i.migrationContext.Log.Info("Estimated %d rows in %s.%s",
+		estimate, i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+
+	return nil
+}
+
+// CountTableRows counts the exact number of rows
+func (i *Inspector) CountTableRows() error {
+	ctx := context.Background()
+
+	query := fmt.Sprintf(
+		"SELECT COUNT(*) FROM %s.%s",
+		sqlpkg.QuoteIdentifier(i.migrationContext.SchemaName),
+		sqlpkg.QuoteIdentifier(i.migrationContext.OriginalTableName),
+	)
+
+	var count int64
+	err := i.db.QueryRowContext(ctx, query).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to count rows: %w", err)
+	}
+
+	atomic.StoreInt64(&i.migrationContext.RowsEstimate, count)
+	i.migrationContext.UsedRowsEstimateMethod = base.CountRowsEstimate
+	i.migrationContext.Log.Info("Counted %d rows in %s.%s",
+		count, i.migrationContext.SchemaName, i.migrationContext.OriginalTableName)
+
+	return nil
+}
+
+// GetWALLevel checks if wal_level is set to 'logical'
+func (i *Inspector) GetWALLevel(ctx context.Context) (string, error) {
+	var walLevel string
+	err := i.db.QueryRowContext(ctx, "SHOW wal_level").Scan(&walLevel)
+	if err != nil {
+		return "", fmt.Errorf("failed to get wal_level: %w", err)
+	}
+	return walLevel, nil
+}
+
+// ValidateWALLevel checks that wal_level is 'logical'
+func (i *Inspector) ValidateWALLevel() error {
+	ctx := context.Background()
+	walLevel, err := i.GetWALLevel(ctx)
+	if err != nil {
+		return err
+	}
+
+	if walLevel != "logical" {
+		return fmt.Errorf("wal_level must be 'logical', got '%s'. Set wal_level = 'logical' in postgresql.conf and restart", walLevel)
+	}
+
+	return nil
+}
