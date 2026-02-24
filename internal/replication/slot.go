@@ -30,21 +30,22 @@ func NewSlotManager(db *sql.DB, slotName string) *SlotManager {
 // Create creates a new logical replication slot
 // Returns the consistent point LSN
 func (s *SlotManager) Create(ctx context.Context) (pglogrepl.LSN, error) {
-	var slotName, consistentPoint string
-	var snapshotName, plugin sql.NullString
+	var lsnStr string
 
+	// pg_create_logical_replication_slot returns (slot_name, lsn) in PG14+
+	// We only need the lsn value
 	err := s.db.QueryRowContext(ctx,
-		"SELECT slot_name, consistent_point, snapshot_name, plugin FROM pg_create_logical_replication_slot($1, 'pgoutput')",
+		"SELECT lsn FROM pg_create_logical_replication_slot($1, 'pgoutput')",
 		s.slotName,
-	).Scan(&slotName, &consistentPoint, &snapshotName, &plugin)
+	).Scan(&lsnStr)
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to create replication slot %s: %w", s.slotName, err)
 	}
 
-	lsn, err := pglogrepl.ParseLSN(consistentPoint)
+	lsn, err := pglogrepl.ParseLSN(lsnStr)
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse LSN %s: %w", consistentPoint, err)
+		return 0, fmt.Errorf("failed to parse LSN %s: %w", lsnStr, err)
 	}
 
 	return lsn, nil
