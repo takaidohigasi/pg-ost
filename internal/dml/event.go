@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pglogrepl"
+
 	"github.com/takaidohigasi/pg-ost/internal/sql"
 )
 

@@ -266,7 +266,7 @@ func TestReplicaConnection(t *testing.T) {
 	}
 
 	hostPort := ctx.GetReplicaHostPort()
-	if hostPort != "replica.example.com" {
-		t.Errorf("GetReplicaHostPort() = %q, want 'replica.example.com'", hostPort)
+	if hostPort != "replica.example.com:5433" {
+		t.Errorf("GetReplicaHostPort() = %q, want 'replica.example.com:5433'", hostPort)
 	}
 }

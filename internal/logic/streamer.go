@@ -111,39 +111,39 @@ func (s *Streamer) InitDBConnections() error {
 		return fmt.Errorf("failed to check publication: %w", err)
 	}
 	if exists {
-		if err := s.pubManager.Drop(ctx); err != nil {
-			return fmt.Errorf("failed to drop existing publication: %w", err)
+		if dropErr := s.pubManager.Drop(ctx); dropErr != nil {
+			return fmt.Errorf("failed to drop existing publication: %w", dropErr)
 		}
 	}
 
 	// Create publication for original table (on primary)
-	if err := s.pubManager.Create(ctx); err != nil {
-		return fmt.Errorf("failed to create publication: %w", err)
+	if createErr := s.pubManager.Create(ctx); createErr != nil {
+		return fmt.Errorf("failed to create publication: %w", createErr)
 	}
 	s.migrationContext.Log.Info("Created publication %s on primary", s.migrationContext.PublicationName)
 
 	// Add changelog table to publication
-	if err := s.pubManager.AddTable(ctx, s.migrationContext.SchemaName, s.migrationContext.GetChangelogTableName()); err != nil {
+	if addErr := s.pubManager.AddTable(ctx, s.migrationContext.SchemaName, s.migrationContext.GetChangelogTableName()); addErr != nil {
 		// Changelog table may not exist yet, that's okay
-		s.migrationContext.Log.Debug("Could not add changelog to publication (may not exist yet): %v", err)
+		s.migrationContext.Log.Debug("Could not add changelog to publication (may not exist yet): %v", addErr)
 	}
 
 	// Drop existing slot if exists (on primary)
-	slotExists, err := s.slotManager.Exists(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to check slot: %w", err)
+	slotExists, slotErr := s.slotManager.Exists(ctx)
+	if slotErr != nil {
+		return fmt.Errorf("failed to check slot: %w", slotErr)
 	}
 	if slotExists {
 		// Check if slot is active
-		active, err := s.slotManager.IsActive(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to check slot status: %w", err)
+		active, activeErr := s.slotManager.IsActive(ctx)
+		if activeErr != nil {
+			return fmt.Errorf("failed to check slot status: %w", activeErr)
 		}
 		if active {
 			return fmt.Errorf("replication slot %s is already in use", s.migrationContext.ReplicationSlotName)
 		}
-		if err := s.slotManager.Drop(ctx); err != nil {
-			return fmt.Errorf("failed to drop existing slot: %w", err)
+		if dropErr := s.slotManager.Drop(ctx); dropErr != nil {
+			return fmt.Errorf("failed to drop existing slot: %w", dropErr)
 		}
 	}
 

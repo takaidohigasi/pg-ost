@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -40,10 +41,6 @@ type tableWriteFunc func() error
 type applyEventStruct struct {
 	writeFunc *tableWriteFunc
 	dmlEvent  *dml.Event
-}
-
-func newApplyEventStructByFunc(writeFunc *tableWriteFunc) *applyEventStruct {
-	return &applyEventStruct{writeFunc: writeFunc}
 }
 
 func newApplyEventStructByDML(dmlEvent *dml.Event) *applyEventStruct {
@@ -535,12 +532,14 @@ func (m *Migrator) cutOver() error {
 	m.migrationContext.Log.Info("Starting cutover...")
 
 	// Check for postpone flag
-	for {
-		if m.migrationContext.PostponeCutOverFlagFile != "" {
-			// Check if file exists
-			// TODO: Implement file check
+	if m.migrationContext.PostponeCutOverFlagFile != "" {
+		for {
+			if _, err := os.Stat(m.migrationContext.PostponeCutOverFlagFile); os.IsNotExist(err) {
+				break
+			}
+			m.migrationContext.Log.Info("Postponing cutover: flag file %s exists", m.migrationContext.PostponeCutOverFlagFile)
+			time.Sleep(1 * time.Second)
 		}
-		break
 	}
 
 	// Mark entering critical section

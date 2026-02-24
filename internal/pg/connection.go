@@ -108,7 +108,7 @@ func GetVersion(ctx context.Context, db *sql.DB) (*PostgreSQLVersion, error) {
 	}
 
 	var major, minor, patch int
-	fmt.Sscanf(versionStr, "%d.%d.%d", &major, &minor, &patch)
+	_, _ = fmt.Sscanf(versionStr, "%d.%d.%d", &major, &minor, &patch)
 
 	return &PostgreSQLVersion{
 		Major: major,

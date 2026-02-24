@@ -6,6 +6,7 @@
 package base
 
 import (
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -183,10 +184,9 @@ type MigrationContext struct {
 	configMutex                   *sync.Mutex
 
 	// Throttle state
-	isThrottled                bool
-	throttleReason             string
-	throttleReasonHint         ThrottleReasonHint
-	throttleGeneralCheckResult ThrottleCheckResult
+	isThrottled        bool
+	throttleReason     string
+	throttleReasonHint ThrottleReasonHint
 
 	// Panic channel
 	PanicAbort chan error
@@ -476,7 +476,7 @@ func (ctx *MigrationContext) GetReplicaHostPort() string {
 	if port == 0 {
 		port = 5432
 	}
-	return ctx.ReplicaHost
+	return fmt.Sprintf("%s:%d", ctx.ReplicaHost, port)
 }
 
 // defaultLogger is a simple default logger

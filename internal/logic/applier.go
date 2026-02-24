@@ -539,7 +539,7 @@ func (a *Applier) ApplyDMLEventQueries(events []*dml.Event) error {
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	for _, event := range events {
 		var query string
@@ -760,7 +760,7 @@ func (a *Applier) AtomicCutOver() error {
 	if err != nil {
 		return fmt.Errorf("failed to begin cutover transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Set lock timeout
 	lockTimeout := fmt.Sprintf("SET LOCAL lock_timeout = '%ds'", a.migrationContext.CutOverLockTimeoutSeconds)

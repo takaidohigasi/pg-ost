@@ -23,9 +23,7 @@ type Throttler struct {
 	applier          *Applier
 	inspector        *Inspector
 	httpClient       *http.Client
-
-	lastThrottleCheck time.Time
-	lastHTTPCheck     time.Time
+	lastHTTPCheck    time.Time
 }
 
 // NewThrottler creates a new Throttler
@@ -150,7 +148,16 @@ func (t *Throttler) checkHTTPThrottle() (bool, string) {
 	}
 	t.lastHTTPCheck = time.Now()
 
-	resp, err := t.httpClient.Head(t.migrationContext.ThrottleHTTP)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, t.migrationContext.ThrottleHTTP, nil)
+	if err != nil {
+		if t.migrationContext.IgnoreHTTPErrors {
+			return false, ""
+		}
+		return true, fmt.Sprintf("HTTP throttle request error: %v", err)
+	}
+	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		if t.migrationContext.IgnoreHTTPErrors {
 			return false, ""
