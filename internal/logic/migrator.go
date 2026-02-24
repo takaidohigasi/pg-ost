@@ -461,9 +461,21 @@ func (m *Migrator) iterateChunks() {
 			return
 		}
 
-		// Queue the copy
+		// Capture range values for this chunk before queuing
+		// This is necessary because the loop continues and may modify range values
+		// before the copy function executes
+		minValues := make([]interface{}, len(m.migrationContext.IterationRangeMinValues))
+		maxValues := make([]interface{}, len(m.migrationContext.IterationRangeMaxValues))
+		copy(minValues, m.migrationContext.IterationRangeMinValues)
+		copy(maxValues, m.migrationContext.IterationRangeMaxValues)
+
+		// Advance the iteration range min for the next iteration
+		// This must be done AFTER capturing but BEFORE the next CalculateNextIterationRangeEndValues
+		m.applier.AdvanceIterationRangeMin()
+
+		// Queue the copy with captured range values
 		copyFunc := func() error {
-			_, rowsCopied, _, err := m.applier.ApplyIterationInsertQuery()
+			_, rowsCopied, _, err := m.applier.ApplyIterationInsertQueryWithRange(minValues, maxValues)
 			if err != nil {
 				return err
 			}

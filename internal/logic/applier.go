@@ -383,7 +383,7 @@ func (a *Applier) CalculateNextIterationRangeEndValues() (bool, error) {
 
 	if err := row.Scan(nextPtrs...); err != nil {
 		if err == sql.ErrNoRows {
-			// Use max values as the end
+			// Use max values as the end - this is the final chunk
 			a.migrationContext.IterationRangeMaxValues = a.migrationContext.MigrationRangeMaxValues
 			return a.hasMoreRows(), nil
 		}
@@ -392,6 +392,12 @@ func (a *Applier) CalculateNextIterationRangeEndValues() (bool, error) {
 
 	a.migrationContext.IterationRangeMaxValues = nextValues
 	return true, nil
+}
+
+// AdvanceIterationRangeMin advances the iteration range min to the current max
+// This should be called after capturing the current range for a copy operation
+func (a *Applier) AdvanceIterationRangeMin() {
+	a.migrationContext.IterationRangeMinValues = a.migrationContext.IterationRangeMaxValues
 }
 
 // hasMoreRows checks if there are more rows to process
@@ -460,7 +466,20 @@ func (a *Applier) formatValue(v interface{}) string {
 }
 
 // ApplyIterationInsertQuery copies rows from the original table to the ghost table
+// using the current iteration range values from the migration context.
+// Note: This method is kept for compatibility but ApplyIterationInsertQueryWithRange
+// should be preferred when the range values need to be captured before the copy executes.
 func (a *Applier) ApplyIterationInsertQuery() (chunkSize int64, rowsAffected int64, duration time.Duration, err error) {
+	return a.ApplyIterationInsertQueryWithRange(
+		a.migrationContext.IterationRangeMinValues,
+		a.migrationContext.IterationRangeMaxValues,
+	)
+}
+
+// ApplyIterationInsertQueryWithRange copies rows from the original table to the ghost table
+// using the provided range values. This is the preferred method when the copy operation
+// is queued and may execute after subsequent range calculations.
+func (a *Applier) ApplyIterationInsertQueryWithRange(minValues, maxValues []interface{}) (chunkSize int64, rowsAffected int64, duration time.Duration, err error) {
 	startTime := time.Now()
 	ctx := context.Background()
 
@@ -505,10 +524,8 @@ func (a *Applier) ApplyIterationInsertQuery() (chunkSize int64, rowsAffected int
 	}
 	updateSet := strings.Join(updateCols, ", ")
 
-	// Build range WHERE clause
-	rangeWhere := a.buildRangeComparison(uniqueKey,
-		a.migrationContext.IterationRangeMinValues,
-		a.migrationContext.IterationRangeMaxValues)
+	// Build range WHERE clause using provided values
+	rangeWhere := a.buildRangeComparison(uniqueKey, minValues, maxValues)
 
 	// Build the INSERT ... SELECT ... ON CONFLICT query
 	var query string
@@ -563,8 +580,8 @@ func (a *Applier) ApplyIterationInsertQuery() (chunkSize int64, rowsAffected int
 
 	rowsAffected, _ = result.RowsAffected()
 
-	// Update iteration min values for next chunk
-	a.migrationContext.IterationRangeMinValues = a.migrationContext.IterationRangeMaxValues
+	// Note: IterationRangeMinValues is now advanced by the migrator's AdvanceIterationRangeMin()
+	// call before queuing the copy, so we don't update it here anymore
 
 	return chunkSize, rowsAffected, time.Since(startTime), nil
 }
