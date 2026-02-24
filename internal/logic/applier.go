@@ -234,10 +234,13 @@ func (a *Applier) ReadMigrationRangeValues() error {
 
 	// Build column list
 	columns := make([]string, len(uniqueKey))
+	columnsDesc := make([]string, len(uniqueKey))
 	for i, col := range uniqueKey {
 		columns[i] = sqlpkg.QuoteIdentifier(col)
+		columnsDesc[i] = sqlpkg.QuoteIdentifier(col) + " DESC"
 	}
 	columnList := strings.Join(columns, ", ")
+	columnListDesc := strings.Join(columnsDesc, ", ")
 
 	// Get min values
 	minQuery := fmt.Sprintf(
@@ -265,13 +268,13 @@ func (a *Applier) ReadMigrationRangeValues() error {
 	a.migrationContext.MigrationRangeMinValues = minValues
 	a.migrationContext.IterationRangeMinValues = minValues
 
-	// Get max values
+	// Get max values - use explicit DESC for each column
 	maxQuery := fmt.Sprintf(
-		"SELECT %s FROM %s.%s ORDER BY %s DESC LIMIT 1",
+		"SELECT %s FROM %s.%s ORDER BY %s LIMIT 1",
 		columnList,
 		sqlpkg.QuoteIdentifier(a.migrationContext.SchemaName),
 		sqlpkg.QuoteIdentifier(a.migrationContext.OriginalTableName),
-		columnList,
+		columnListDesc,
 	)
 
 	maxRow := a.db.QueryRowContext(ctx, maxQuery)
@@ -297,6 +300,11 @@ func (a *Applier) CalculateNextIterationRangeEndValues() (bool, error) {
 
 	if len(uniqueKey) == 0 {
 		return false, fmt.Errorf("no unique key defined")
+	}
+
+	// Check if table is empty (no range values set)
+	if a.migrationContext.IterationRangeMinValues == nil || a.migrationContext.MigrationRangeMaxValues == nil {
+		return false, nil
 	}
 
 	// Build column list
