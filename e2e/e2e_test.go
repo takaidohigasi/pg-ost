@@ -179,6 +179,7 @@ func createMigrationContext(cfg *TestConfig, tableName, alterStatement string) *
 	ctx.SchemaName = "public"
 	ctx.OriginalTableName = tableName
 	ctx.AlterStatement = alterStatement
+	ctx.SSLMode = "disable"
 	ctx.Execute = true
 	ctx.ChunkSize = 100
 	ctx.MaxLagMillisecondsThrottleThreshold = 5000
