@@ -129,6 +129,52 @@ func (a *Applier) AlterGhost() error {
 	}
 
 	a.migrationContext.Log.Info("Applied ALTER to ghost table: %s", alterQuery)
+
+	// Calculate shared columns between original and ghost tables
+	if err := a.calculateSharedColumns(); err != nil {
+		return fmt.Errorf("failed to calculate shared columns: %w", err)
+	}
+
+	return nil
+}
+
+// calculateSharedColumns determines which columns exist in both original and ghost tables
+func (a *Applier) calculateSharedColumns() error {
+	ctx := context.Background()
+	ghostTableName := a.migrationContext.GetGhostTableName()
+
+	// Get ghost table columns
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT column_name
+		FROM information_schema.columns
+		WHERE table_schema = $1 AND table_name = $2
+		ORDER BY ordinal_position
+	`, a.migrationContext.SchemaName, ghostTableName)
+	if err != nil {
+		return fmt.Errorf("failed to get ghost table columns: %w", err)
+	}
+	defer rows.Close()
+
+	ghostColumns := make(map[string]bool)
+	for rows.Next() {
+		var colName string
+		if err := rows.Scan(&colName); err != nil {
+			return fmt.Errorf("failed to scan column: %w", err)
+		}
+		ghostColumns[colName] = true
+	}
+
+	// Find intersection with original table columns (preserving original order)
+	var sharedColumns []string
+	for _, col := range a.migrationContext.OriginalTableColumns {
+		if ghostColumns[col] {
+			sharedColumns = append(sharedColumns, col)
+		}
+	}
+
+	a.migrationContext.SharedTableColumns = sharedColumns
+	a.migrationContext.Log.Info("Shared columns for row copy: %v", sharedColumns)
+
 	return nil
 }
 
@@ -420,7 +466,13 @@ func (a *Applier) ApplyIterationInsertQuery() (chunkSize int64, rowsAffected int
 
 	chunkSize = atomic.LoadInt64(&a.migrationContext.ChunkSize)
 	uniqueKey := a.migrationContext.UniqueKeyColumns
-	columns := a.migrationContext.OriginalTableColumns
+	// Use shared columns (intersection of original and ghost table columns)
+	// to handle DROP COLUMN and ADD COLUMN scenarios
+	columns := a.migrationContext.SharedTableColumns
+	if len(columns) == 0 {
+		// Fallback to original columns if shared columns not calculated
+		columns = a.migrationContext.OriginalTableColumns
+	}
 
 	// Build column lists
 	quotedColumns := make([]string, len(columns))

@@ -93,6 +93,7 @@ type MigrationContext struct {
 	// Table information
 	UniqueKeyColumns        []string
 	OriginalTableColumns    []string
+	SharedTableColumns      []string // Columns present in both original and ghost tables (for row copy)
 	GhostTableName          string
 	ChangelogTableName      string
 	OldTableName            string
