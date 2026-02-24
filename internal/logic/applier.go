@@ -21,11 +21,12 @@ import (
 
 // Applier applies changes to the ghost table
 type Applier struct {
-	connectionConfig *pg.ConnectionConfig
-	db               *sql.DB
-	singletonDB      *sql.DB // For operations requiring single connection
-	migrationContext *base.MigrationContext
-	parser           *sqlpkg.AlterTableParser
+	connectionConfig   *pg.ConnectionConfig
+	db                 *sql.DB
+	singletonDB        *sql.DB // For operations requiring single connection
+	migrationContext   *base.MigrationContext
+	parser             *sqlpkg.AlterTableParser
+	finalChunkReturned bool // Track if we've already returned the final chunk
 }
 
 // NewApplier creates a new Applier
@@ -349,6 +350,7 @@ func (a *Applier) hasMoreRows() bool {
 	}
 
 	// Compare current position with max
+	// If current min is less than the max, we still have rows to process
 	for i := range a.migrationContext.IterationRangeMinValues {
 		min := a.migrationContext.IterationRangeMinValues[i]
 		max := a.migrationContext.MigrationRangeMaxValues[i]
@@ -356,7 +358,13 @@ func (a *Applier) hasMoreRows() bool {
 			return true
 		}
 	}
-	return true // Process the last row
+	// Current position equals max - this is the final chunk
+	// Only return true once for the final chunk
+	if a.finalChunkReturned {
+		return false
+	}
+	a.finalChunkReturned = true
+	return true
 }
 
 // buildRangeWhereClause builds a WHERE clause for range comparison
