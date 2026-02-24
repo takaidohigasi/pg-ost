@@ -188,6 +188,11 @@ func (m *Migrator) Migrate() error {
 		return fmt.Errorf("failed to create changelog table: %w", err)
 	}
 
+	// Step 10b: Add changelog table to publication (must be after changelog table is created)
+	if err := m.streamer.AddChangelogToPublication(); err != nil {
+		return fmt.Errorf("failed to add changelog to publication: %w", err)
+	}
+
 	// Step 11: Start streaming DML events (in background)
 	go m.streamEvents()
 
