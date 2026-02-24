@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -351,9 +352,8 @@ func (m *Migrator) handleChangelogEvent(event *dml.Event) {
 
 	// Handle state changes
 	if hintStr == "state" {
-		state := ChangelogState(valueStr)
-		switch state {
-		case AllEventsUpToLockProcessed:
+		// Forward cutover markers to the waiting channel
+		if strings.HasPrefix(valueStr, "cutover-") {
 			select {
 			case m.allEventsUpToLockProcessed <- valueStr:
 			default:
